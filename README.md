@@ -11,8 +11,8 @@ them, in an app and in a command you can pipe.
 
 - **Search** every docset at once, exactly or loosely: `NSPast` finds `NSPasteboard`.
 - **Read** a symbol's page in the window, or print it as text with `docent show`.
-- **Index your own** documentation: point `docent index` at a repository and its Markdown
-  becomes searchable next to everything else.
+- **Index your own** documentation: point the app (⇧⌘I) or `docent index` at a repository
+  and its Markdown becomes searchable next to everything else.
 - **Read comfortably.** Pages are painted to match the app — light or dark, your choice —
   and code blocks are syntax-highlighted even when the docset ships them plain.
 - **Keep it offline.** Docent never opens a network connection, and pages you read cannot
@@ -101,6 +101,11 @@ symbol lives in, so you can hand it to something else.
 
 ### 3. Index a repository
 
+In the app: **File ▸ Index Folder…** (⇧⌘I), pick a repository, and it appears in the sidebar
+when it is done. Choosing a folder that is already indexed offers to rebuild it.
+
+From the terminal:
+
 ```sh
 docent index ~/code/myproject --name "My Project" --keyword mine
 docent find mine:install
@@ -134,6 +139,7 @@ exactly as they are.
 | ⌘F | back to the search field |
 | ↑ / ↓ | move through the results while you keep typing |
 | ⌘[ / ⌘] | back and forward through what you have read |
+| ⇧⌘I | index a folder of documentation |
 | ⌘R | look for docsets again after adding one |
 
 Page colours live in **View ▸ Page Appearance**: match the system, or pin pages light or

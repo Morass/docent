@@ -1,8 +1,31 @@
 import SwiftUI
+import AppKit
 import DocentKit
 
 @main
 struct DocentApp: App {
+    /// File ▸ Index Folder… — pick a folder of documentation and turn it into a docset
+    /// without leaving the window.
+    @MainActor
+    private func indexFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Index"
+        panel.message = "Choose a folder of documentation — a repository, or a docs folder inside one."
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+
+        if !browser.index(folder: folder) {
+            let alert = NSAlert()
+            alert.messageText = "“\(folder.lastPathComponent)” is already indexed."
+            alert.informativeText = "Rebuild it from the folder as it is now?"
+            alert.addButton(withTitle: "Rebuild")
+            alert.addButton(withTitle: "Cancel")
+            if alert.runModal() == .alertFirstButtonReturn { browser.rebuildPending() }
+        }
+    }
+
     @StateObject private var browser = Browser()
     @FocusState private var searchFocused: Bool
 
@@ -19,6 +42,10 @@ struct DocentApp: App {
         }
         .defaultSize(width: 1080, height: 720)
         .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("Index Folder…") { indexFolder() }
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
+            }
             CommandGroup(after: .textEditing) {
                 Button("Find") { NotificationCenter.default.post(name: .docentFocusSearch, object: nil) }
                     .keyboardShortcut("f", modifiers: .command)
@@ -39,7 +66,6 @@ struct DocentApp: App {
                 Button("Reload Docsets") { browser.reloadDocsets() }
                     .keyboardShortcut("r", modifiers: .command)
             }
-            CommandGroup(replacing: .newItem) { }
         }
     }
 }
@@ -128,6 +154,24 @@ struct BrowserWindow: View {
             .padding(8)
             Divider()
             results
+            // What just happened: indexing progress, the result of it, or why a search found
+            // nothing. Without this the menu item looks like it did nothing.
+            if !browser.status.isEmpty || browser.indexing {
+                Divider()
+                HStack(spacing: 6) {
+                    if browser.indexing {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(browser.status)
+                        .font(.caption)
+                        .foregroundStyle(Color.primary.opacity(0.8))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+            }
         }
         .background(Color(nsColor: .textBackgroundColor))
         .frame(minWidth: 240, idealWidth: 300, maxWidth: 480)

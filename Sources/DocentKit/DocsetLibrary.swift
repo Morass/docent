@@ -34,6 +34,15 @@ public struct DocsetLibrary: Sendable {
         DocsetLibrary(searchPaths: defaultSearchPaths(environment: environment, home: home))
     }
 
+    /// Where a newly built or added docset belongs: the first folder this library looks in.
+    ///
+    /// Always writing to `~/Library/Application Support/Docent/DocSets` would install into a
+    /// folder the library is not reading whenever `DOCENT_DOCSETS` points somewhere else —
+    /// the docset then exists and is invisible.
+    public var installDirectory: URL {
+        searchPaths.first ?? Home.docsetsDirectory()
+    }
+
     /// Every docset found, sorted by name, one entry per identifier: the same docset
     /// installed in two of the folders above is listed once, the earlier path winning.
     public func docsets() -> [Docset] {

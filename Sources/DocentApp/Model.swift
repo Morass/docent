@@ -43,6 +43,60 @@ final class Browser: ObservableObject {
     var canGoBack: Bool { historyIndex > 0 }
     var canGoForward: Bool { historyIndex >= 0 && historyIndex < history.count - 1 }
 
+    /// Indexing, from the window. The panel picks a folder; everything else — building the
+    /// docset, installing it, reloading the library and selecting the result — happens here,
+    /// so the menu item is three lines and this is what the self-test drives.
+    @discardableResult
+    func index(folder: URL, name: String? = nil, keyword: String? = nil, replace: Bool = false) -> Bool {
+        let title = name ?? folder.lastPathComponent
+        let word = keyword ?? Markdown.slug(title).nonEmpty
+        let destination = service.library.installDirectory.appendingPathComponent(Indexer.folderName(for: title))
+
+        if FileManager.default.fileExists(atPath: destination.path), !replace {
+            status = "“\(title)” is already indexed. Index it again to rebuild it."
+            pendingReindex = (folder, title, word)
+            return false
+        }
+        pendingReindex = nil
+        status = "Indexing \(title)…"
+        indexing = true
+
+        let indexer = Indexer(source: folder, name: title, keyword: word)
+        queue.async { [weak self] in
+            let outcome: Result<Indexer.Report, Error>
+            do {
+                try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
+                                                        withIntermediateDirectories: true)
+                outcome = .success(try indexer.build(into: destination))
+            } catch {
+                outcome = .failure(error)
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.indexing = false
+                switch outcome {
+                case .success(let report):
+                    self.reloadDocsets()
+                    self.docsetFilter = word ?? title
+                    self.status = "Indexed \(title): \(report.files) file\(report.files == 1 ? "" : "s"), \(report.entries) entries."
+                case .failure(let error):
+                    self.status = "Could not index \(title): \(error)"
+                }
+            }
+        }
+        return true
+    }
+
+    /// A folder the user asked for that is already indexed, kept so the menu can offer to
+    /// rebuild it without asking them to find it again.
+    @Published private(set) var pendingReindex: (folder: URL, name: String, keyword: String?)?
+    @Published private(set) var indexing = false
+
+    func rebuildPending() {
+        guard let pending = pendingReindex else { return }
+        index(folder: pending.folder, name: pending.name, keyword: pending.keyword, replace: true)
+    }
+
     func reloadDocsets() {
         docsets = service.docsets()
         status = docsets.isEmpty ? Browser.emptyLibraryMessage : ""

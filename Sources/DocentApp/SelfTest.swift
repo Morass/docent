@@ -19,6 +19,7 @@ enum SelfTest {
         case "network": failures = MainActor.assumeIsolated { network() }
         case "escape": failures = MainActor.assumeIsolated { escape() }
         case "theme": failures = MainActor.assumeIsolated { theme() }
+        case "indexui": failures = MainActor.assumeIsolated { indexFromTheWindow() }
         default:
             FileHandle.standardError.write(Data("selftest: no mode called \"\(mode)\"\n".utf8))
             exit(2)
@@ -215,6 +216,57 @@ enum SelfTest {
         if (text ?? "").contains("SECRET-OUTSIDE-THE-DOCSET") {
             failures.append("a page displayed a file from outside its docset through a symlink")
         }
+        return failures
+    }
+
+    /// The menu item's whole job, minus the file panel: index a folder, install it, reload
+    /// the library and select it. The panel is three lines in `DocentApp`; this is the part
+    /// that can be wrong.
+    @MainActor
+    private static func indexFromTheWindow() -> [String] {
+        var failures: [String] = []
+        func check(_ condition: Bool, _ message: String) { if !condition { failures.append(message) } }
+
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("docent-indexui-\(UUID().uuidString)", isDirectory: true)
+        try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: folder) }
+        try? "# Sample\n\n## Kerning\n\nThe kerning table is fiddly.\n"
+            .data(using: .utf8)!.write(to: folder.appendingPathComponent("README.md"))
+
+        let browser = Browser()
+        let before = browser.docsets.count
+
+        check(browser.index(folder: folder, name: "Sample", keyword: "sample"), "indexing was refused on a fresh name")
+        let deadline = Date().addingTimeInterval(20)
+        while browser.indexing, Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        check(!browser.indexing, "indexing never finished")
+        check(browser.docsets.count == before + 1, "the new docset did not appear in the library")
+        check(browser.status.contains("Indexed Sample"), "the window said nothing useful afterwards: \(browser.status)")
+
+        browser.query = "Kerning"
+        browser.searchAndWait()
+        check(!browser.results.isEmpty, "the heading of the folder just indexed was not searchable")
+
+        browser.query = "fiddly"
+        browser.searchAndWait()
+        check(!browser.results.isEmpty, "a word in the prose of the folder just indexed was not found")
+
+        // Indexing the same folder again must ask rather than silently rebuild.
+        check(!browser.index(folder: folder, name: "Sample", keyword: "sample"),
+              "indexing an already-indexed folder went ahead without asking")
+        check(browser.status.contains("already indexed"), "it did not say why: \(browser.status)")
+        browser.rebuildPending()
+        let second = Date().addingTimeInterval(20)
+        while browser.indexing, Date() < second {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        check(browser.status.contains("Indexed Sample"), "the rebuild did not finish: \(browser.status)")
+        check(browser.docsets.count == before + 1, "the rebuild added a second copy")
+
+        try? fm.removeItem(at: Home.docsetsDirectory().appendingPathComponent(Indexer.folderName(for: "Sample")))
         return failures
     }
 

@@ -466,7 +466,7 @@ func runAdd(_ arguments: Arguments) throws {
         throw CommandError("there is nothing at \(safe(sourceURL.path))")
     }
 
-    let destinationRoot = Home.docsetsDirectory()
+    let destinationRoot = DocsetLibrary.standard().installDirectory
     try fm.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
 
     // Adding a docset from the library back into the library would delete it: the old copy
@@ -623,7 +623,7 @@ func runIndex(_ arguments: Arguments) throws {
     if let out = arguments.options["out"] {
         destination = URL(fileURLWithPath: expandTilde(out)).standardizedFileURL
     } else {
-        let library = Home.docsetsDirectory()
+        let library = DocsetLibrary.standard().installDirectory
         try fm.createDirectory(at: library, withIntermediateDirectories: true)
         destination = library.appendingPathComponent(Indexer.folderName(for: name))
         if fm.fileExists(atPath: destination.path), !arguments.flags.contains("replace") {

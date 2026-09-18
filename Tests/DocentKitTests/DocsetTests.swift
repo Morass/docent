@@ -148,3 +148,22 @@ extension DocsetTests {
         XCTAssertTrue(file.path.hasPrefix(docset.readAccessURL.path + "/"))
     }
 }
+
+extension DocsetTests {
+    /// A docset must be installed where the library is actually looking, or it exists and is
+    /// invisible — which is exactly what happened the first time the window indexed a folder.
+    func testInstallGoesToTheFirstSearchPath() {
+        let library = DocsetLibrary(searchPaths: [URL(fileURLWithPath: "/tmp/first"), URL(fileURLWithPath: "/tmp/second")])
+        XCTAssertEqual(library.installDirectory.path, "/tmp/first")
+    }
+
+    func testInstallFollowsTheEnvironmentOverride() {
+        let library = DocsetLibrary.standard(environment: ["DOCENT_DOCSETS": "/tmp/a:/tmp/b"])
+        XCTAssertEqual(library.installDirectory.path, "/tmp/a")
+    }
+
+    func testInstallFallsBackToTheHomeLibrary() {
+        let library = DocsetLibrary.standard(environment: ["HOME": "/tmp/pretend-home"])
+        XCTAssertTrue(library.installDirectory.path.hasSuffix("Docent/DocSets"), library.installDirectory.path)
+    }
+}
