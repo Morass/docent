@@ -11,7 +11,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 "$ROOT/Scripts/make-fixture-docset.sh" "$WORK" >/dev/null
 
-for mode in browse page network; do
+for mode in browse page network escape; do
     HOME="$WORK" DOCENT_DOCSETS="$WORK" DOCENT_SELFTEST="$mode" "$APP"
 done
 

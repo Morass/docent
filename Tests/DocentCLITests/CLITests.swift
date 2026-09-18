@@ -435,3 +435,43 @@ extension CLITests {
         XCTAssertFalse(run.out.contains("\u{1B}"), run.out.debugDescription)
     }
 }
+
+extension CLITests {
+    /// An option a command does not read used to be accepted and ignored.
+    func testAnOptionACommandDoesNotUnderstandIsRefused() throws {
+        try makeGopher()
+        let run = try docent(["show", "fmt", "--limit", "5"])
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("--limit"), run.err)
+        XCTAssertTrue(run.err.contains("--index") || run.err.contains("--all"), "the error should say what show does take: \(run.err)")
+    }
+
+    func testTheOptionsEachCommandDocumentsAreAccepted() throws {
+        try makeGopher()
+        for arguments in [["find", "fmt", "--limit", "2"], ["find", "fmt", "--json"], ["show", "fmt", "--all"],
+                          ["show", "fmt", "--index", "1"], ["path", "fmt", "--docset", "go"], ["list", "--paths"]] {
+            let run = try docent(arguments)
+            XCTAssertEqual(run.status, 0, "\(arguments) was refused: \(run.err)")
+        }
+    }
+
+    /// `--all` reads the page through the same loader as everything else, so it keeps the
+    /// size cap and the encoding fallback.
+    func testShowAllReadsALatin1PageLikeTheAnchoredPathDoes() throws {
+        try makeGopher()
+        let documents = docsets.appendingPathComponent("Gopher.docset/Contents/Resources/Documents")
+        let latin = "<html><body><p>caf\u{E9} na\u{EF}ve</p></body></html>"
+        try latin.data(using: .isoLatin1)!.write(to: documents.appendingPathComponent("latin.html"))
+        let sqlite = Process()
+        sqlite.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        sqlite.arguments = [docsets.appendingPathComponent("Gopher.docset/Contents/Resources/docSet.dsidx").path,
+                            "INSERT INTO searchIndex(name,type,path) VALUES ('Latin','Page','latin.html');"]
+        try sqlite.run()
+        sqlite.waitUntilExit()
+
+        let anchored = try docent(["show", "Latin"])
+        let whole = try docent(["show", "Latin", "--all"])
+        XCTAssertTrue(anchored.out.contains("café"), anchored.out)
+        XCTAssertTrue(whole.out.contains("café"), "--all lost the encoding fallback: \(whole.out)")
+    }
+}

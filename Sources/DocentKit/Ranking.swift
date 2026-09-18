@@ -34,7 +34,9 @@ public enum Ranking {
         if name == query { return 10_000 - lengthPenalty }
         if lowerName == lowerQuery { return 9_000 - lengthPenalty }
         if lowerName.hasPrefix(lowerQuery) { return 8_000 - lengthPenalty }
-        if let boundary = boundaryPrefixIndex(lowerName, lowerQuery) { return 7_000 - boundary - lengthPenalty }
+        if let boundary = boundaryPrefixIndex(name, query) ?? boundaryPrefixIndex(lowerName, lowerQuery) {
+            return 7_000 - boundary - lengthPenalty
+        }
         if lowerName.contains(lowerQuery) { return 6_000 - lengthPenalty }
         if let gaps = subsequenceGaps(lowerName, lowerQuery) { return 4_000 - gaps * 10 - lengthPenalty }
         return nil
@@ -51,7 +53,11 @@ public enum Ranking {
         var index = 1
         while index <= characters.count - target.count {
             let previous = characters[index - 1]
-            if separators.contains(previous) {
+            let current = characters[index]
+            // A separator, or a camelCase hump: `Length` inside `NSStringLength` is where a
+            // word begins, even though no punctuation says so.
+            let isHump = current.isUppercase && (previous.isLowercase || previous.isNumber)
+            if separators.contains(previous) || isHump {
                 if Array(characters[index..<(index + target.count)]) == target { return index }
             }
             index += 1

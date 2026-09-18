@@ -175,6 +175,29 @@ struct Arguments {
     var flags: Set<String> = []
     var options: [String: String] = [:]
 
+    /// Options and flags each command actually reads. Anything else the user typed is a
+    /// mistake worth saying out loud: `docent show x --limit 5` used to accept the limit
+    /// and ignore it.
+    static let understood: [String: Set<String>] = [
+        "list": ["paths"],
+        "find": ["limit", "docset", "json"],
+        "show": ["docset", "index", "all"],
+        "path": ["docset", "index"],
+        "add": ["replace"],
+        "help": [],
+    ]
+
+    func checkUnderstood(by command: String) throws {
+        guard let allowed = Arguments.understood[command] else { return }
+        let given = flags.union(options.keys).subtracting(["help"])
+        let extra = given.subtracting(allowed).sorted()
+        guard let first = extra.first else { return }
+        let known = allowed.sorted().map { "--" + $0 }.joined(separator: ", ")
+        throw CommandError(known.isEmpty
+            ? "\(command) takes no options, so --\(first) means nothing here"
+            : "\(command) does not take --\(first). It takes: \(known)")
+    }
+
     init(_ raw: [String], optionsTakingValues: Set<String>) throws {
         var iterator = raw.makeIterator()
         while let argument = iterator.next() {
@@ -314,14 +337,7 @@ func runShow(_ arguments: Arguments) throws {
     let match = try pick(found, arguments: arguments)
     let service = service(for: arguments)
 
-    let page: RenderedPage
-    if arguments.flags.contains("all") {
-        let (url, _) = try service.location(of: match)
-        let html = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        page = HTMLText.render(html)
-    } else {
-        page = try service.page(for: match)
-    }
+    let page = try service.page(for: match, wholePage: arguments.flags.contains("all"))
 
     var header = bold(safe(match.entry.name))
     if !match.entry.type.isEmpty { header += dim("  \(safe(match.entry.type))") }
@@ -458,14 +474,9 @@ func checkArchive(_ url: URL) throws {
 
     // Sizes come from the verbose listing, where only the size column is read — a number,
     // never a name.
-    var bytes = 0
     let listing = try run("/usr/bin/tar", ["-tvf", url.path], failure: "could not read \(safe(url.lastPathComponent))")
-    for line in listing.split(separator: "\n") {
-        let columns = line.split(separator: " ", omittingEmptySubsequences: true)
-        if columns.count > 4, let size = Int(columns[2]) { bytes += size }
-        if bytes > AddLimits.maxBytes {
-            throw CommandError("that archive unpacks to more than \(AddLimits.maxBytes / (1024 * 1024 * 1024)) GB — not unpacking it")
-        }
+    if TarListing.unpackedBytes(listing) > AddLimits.maxBytes {
+        throw CommandError("that archive unpacks to more than \(AddLimits.maxBytes / (1024 * 1024 * 1024)) GB — not unpacking it")
     }
 }
 
@@ -558,6 +569,8 @@ do {
         print(out: commandHelp[command] ?? generalHelp())
         exit(0)
     }
+
+    try arguments.checkUnderstood(by: command)
 
     switch command {
     case "list": try runList(arguments)

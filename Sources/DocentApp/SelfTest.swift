@@ -17,6 +17,7 @@ enum SelfTest {
         case "browse": failures = browse()
         case "page": failures = MainActor.assumeIsolated { page() }
         case "network": failures = MainActor.assumeIsolated { network() }
+        case "escape": failures = MainActor.assumeIsolated { escape() }
         default:
             FileHandle.standardError.write(Data("selftest: no mode called \"\(mode)\"\n".utf8))
             exit(2)
@@ -158,6 +159,64 @@ enum SelfTest {
         return failures
     }
 
+    /// Proves that a page cannot show a file outside its docset through a symlink. The
+    /// command's read path resolves symlinks; this is the app's half of the same promise,
+    /// and it was still lexical after round one.
+    @MainActor
+    private static func escape() -> [String] {
+        var failures: [String] = []
+        let fm = FileManager.default
+        let directory = fm.temporaryDirectory.appendingPathComponent("docent-escape-\(UUID().uuidString)", isDirectory: true)
+        let documents = directory.appendingPathComponent("Documents", isDirectory: true)
+        try? fm.createDirectory(at: documents, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: directory) }
+
+        // A file outside the docset, and a link inside it that points at the file.
+        let outside = directory.appendingPathComponent("outside.html")
+        try? "<p>SECRET-OUTSIDE-THE-DOCSET</p>".data(using: .utf8)!.write(to: outside)
+        try? fm.createSymbolicLink(at: documents.appendingPathComponent("leak.html"), withDestinationURL: outside)
+
+        let page = documents.appendingPathComponent("page.html")
+        try? "<h1>Page</h1><iframe src=\"leak.html\" width=\"400\" height=\"200\"></iframe>"
+            .data(using: .utf8)!.write(to: page)
+
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), configuration: configuration)
+        let probe = LoadProbe()
+        probe.root = documents
+        webView.navigationDelegate = probe
+        webView.loadFileURL(page, allowingReadAccessTo: documents)
+
+        let deadline = Date().addingTimeInterval(8)
+        while probe.finished == nil, Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        // Give the frame a moment to try.
+        let settle = Date().addingTimeInterval(1.5)
+        while Date() < settle {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+
+        var text: String?
+        var done = false
+        webView.evaluateJavaScript("document.documentElement.innerText + (document.querySelector('iframe') && document.querySelector('iframe').contentDocument ? document.querySelector('iframe').contentDocument.documentElement.innerText : '')") { value, _ in
+            text = value as? String
+            done = true
+        }
+        let jsDeadline = Date().addingTimeInterval(5)
+        while !done, Date() < jsDeadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+
+        if probe.finished == nil { failures.append("the page never loaded, so the test proved nothing") }
+        if probe.cancelled == 0 { failures.append("the navigation policy allowed the symlinked frame — it should have refused it") }
+        if (text ?? "").contains("SECRET-OUTSIDE-THE-DOCSET") {
+            failures.append("a page displayed a file from outside its docset through a symlink")
+        }
+        return failures
+    }
+
     /// A socket on localhost that counts anyone who connects.
     private final class Beacon: @unchecked Sendable {
         private var listener: NWListener?
@@ -199,18 +258,11 @@ enum SelfTest {
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            guard let url = navigationAction.request.url, url.isFileURL, let root else {
+            guard let url = navigationAction.request.url, let root, Containment.allows(url, under: root) else {
                 cancelled += 1
                 return decisionHandler(.cancel)
             }
-            let allowed = root.standardizedFileURL.path
-            let path = url.standardizedFileURL.path
-            if (url.host == nil || url.host?.isEmpty == true), path == allowed || path.hasPrefix(allowed + "/") {
-                decisionHandler(.allow)
-            } else {
-                cancelled += 1
-                decisionHandler(.cancel)
-            }
+            decisionHandler(.allow)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

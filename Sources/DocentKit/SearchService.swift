@@ -105,7 +105,12 @@ public struct SearchService: Sendable {
     }
 
     /// The page as text — what the command prints.
-    public func page(for match: Match) throws -> RenderedPage {
+    ///
+    /// `wholePage` is `docent show --all`: the same file, rendered without slicing out the
+    /// symbol's section. It goes through here rather than reading the file itself, because
+    /// the size cap and the encoding fallback belong to *reading a docset page*, not to one
+    /// of the two commands that does it.
+    public func page(for match: Match, wholePage: Bool = false) throws -> RenderedPage {
         let (url, anchor) = try location(of: match)
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil
         if let size, size > SearchService.pageSizeLimit {
@@ -116,6 +121,6 @@ public struct SearchService: Sendable {
             ?? String(data: data, encoding: .isoLatin1)
             ?? ""
         guard !html.isEmpty else { throw PageError.unreadable(url.path) }
-        return HTMLText.render(html, anchor: anchor)
+        return HTMLText.render(html, anchor: wholePage ? nil : anchor)
     }
 }

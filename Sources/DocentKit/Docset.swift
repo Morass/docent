@@ -77,10 +77,8 @@ public struct Docset: Hashable, Sendable, Comparable {
         let cleaned = withoutAnchor.removingPercentEncoding ?? withoutAnchor
         guard !cleaned.isEmpty else { return nil }
         let candidate = URL(fileURLWithPath: cleaned, relativeTo: documentsURL).standardizedFileURL
-        let root = readAccessURL.path
-        let resolved = candidate.resolvingSymlinksInPath()
-        guard resolved.path == root || resolved.path.hasPrefix(root + "/") else { return nil }
-        return resolved
+        guard Containment.allows(candidate, under: readAccessURL) else { return nil }
+        return candidate.resolvingSymlinksInPath()
     }
 
     /// The `#anchor` part of a docset path, if it has one. Left percent-encoded: Dash

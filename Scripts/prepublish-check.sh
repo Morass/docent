@@ -31,7 +31,7 @@ tracked=$(git ls-files | grep -E "$agentfiles")
 past=$(git log --all --name-only --format= | sort -u | grep -E "$agentfiles")
 [ -n "$past" ] && { echo "$past"; hit "agent instruction files exist in history"; }
 
-paths=$(git grep -nIE '/Users/[A-Za-z][A-Za-z0-9_-]+/|/home/[a-z][a-z0-9_-]+/|(^|[^0-9.v])[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}([^0-9.]|$)' -- "$self" ':!go.sum' |
+paths=$(git grep -nIE '/Users/[A-Za-z][A-Za-z0-9_-]*/|/home/[a-z][a-z0-9_-]*/|(^|[^0-9.v])[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}([^0-9.]|$)' -- "$self" ':!go.sum' |
 	grep -vE '/Users/(you|u|alice|bob|recorded|nonexistent)/|/home/(u|bob|linuxbrew|secret)/|0\.0\.0\.0|127\.0\.0\.1|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.')
 [ -n "$paths" ] && { echo "$paths"; hit "home paths or IP addresses above"; }
 

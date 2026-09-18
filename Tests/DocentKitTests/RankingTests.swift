@@ -65,3 +65,21 @@ extension Docset {
         return docset
     }
 }
+
+extension RankingTests {
+    /// A camelCase hump starts a word even though no punctuation says so, which is how
+    /// people search Objective-C and Swift APIs.
+    func testACamelCaseHumpCountsAsAWordBoundary() {
+        let humped = Ranking.score(name: "NSStringLength", query: "Length")
+        let buried = Ranking.score(name: "stringlengthy", query: "length")
+        XCTAssertNotNil(humped)
+        XCTAssertNotNil(buried)
+        XCTAssertGreaterThan(humped!, buried!, "a hump should rank above a name that merely contains the query")
+    }
+
+    func testTheHumpDoesNotOutrankARealPrefix() {
+        let prefix = Ranking.score(name: "Length", query: "Length")!
+        let hump = Ranking.score(name: "NSStringLength", query: "Length")!
+        XCTAssertGreaterThan(prefix, hump)
+    }
+}

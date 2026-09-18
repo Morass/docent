@@ -10,7 +10,12 @@ import Foundation
 public enum NetworkBlock {
     /// Schemes a page must not be able to reach. `file:` is deliberately absent, and so is
     /// `data:`, which carries its own bytes and goes nowhere.
-    public static let blockedSchemes = ["https?", "wss?", "ftps?", "blob"]
+    /// Schemes written with an authority — `https://…`. `blob:` is not one of them, which
+    /// is why it is listed separately below: `^blob://` matches nothing at all.
+    public static let blockedSchemes = ["https?", "wss?", "ftps?"]
+
+    /// Schemes that carry no `//`.
+    public static let blockedBareSchemes = ["blob"]
 
     /// `file://host/share/x` is not a local file: macOS mounts it over SMB, so a page can
     /// reach the network through the one scheme the reader has to allow. A local file URL
@@ -21,6 +26,11 @@ public enum NetworkBlock {
         var rules = blockedSchemes.map { scheme in
             """
             {"trigger":{"url-filter":"^\(scheme)://","load-type":["first-party","third-party"]},"action":{"type":"block"}}
+            """
+        }
+        rules += blockedBareSchemes.map { scheme in
+            """
+            {"trigger":{"url-filter":"^\(scheme):","load-type":["first-party","third-party"]},"action":{"type":"block"}}
             """
         }
         rules.append("""
