@@ -81,7 +81,13 @@ final class Browser: ObservableObject {
         queue.async { [weak self] in
             let outcome: Result<[Match], Error>
             do {
-                outcome = .success(try searchService.find(trimmed, limit: 200, in: pool))
+                // Names first; if nothing is called this, look inside the pages of docsets
+                // Docent indexed itself.
+                var found = try searchService.find(trimmed, limit: 200, in: pool)
+                if found.isEmpty {
+                    found = try searchService.findInText(trimmed, limit: 50, in: pool)
+                }
+                outcome = .success(found)
             } catch {
                 outcome = .failure(error)
             }

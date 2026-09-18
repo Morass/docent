@@ -105,11 +105,16 @@ let commandHelp: [String: String] = [
     OPTIONS
       --limit N       how many results to print (default 20)
       --docset NAME   only this docset, by name or keyword
+      --text          search the text of the pages instead of symbol names
       --json          print results as JSON, one object per match
 
     The query can name a docset itself: `docent find go:Println` searches only the Go
     docset. Matching is exact first, then prefixes, then anything containing the query,
     then a loose letters-in-order match — so a half-remembered name still finds the page.
+
+    When no name matches, Docent looks inside the pages of docsets built with
+    `docent index` and lists the ones that mention the query. `--text` searches that way
+    from the start.
 
     EXAMPLES
       docent find NSPasteboard
@@ -206,9 +211,9 @@ struct Arguments {
     /// and ignore it.
     static let understood: [String: Set<String>] = [
         "list": ["paths"],
-        "find": ["limit", "docset", "json"],
-        "show": ["docset", "index", "all"],
-        "path": ["docset", "index"],
+        "find": ["limit", "docset", "json", "text"],
+        "show": ["docset", "index", "all", "text"],
+        "path": ["docset", "index", "text"],
         "add": ["replace"],
         "index": ["name", "keyword", "out", "replace"],
         "help": [],
@@ -307,22 +312,39 @@ func symbolCount(of docset: Docset) throws -> Int {
     try SearchIndex(url: docset.indexURL).symbolCount()
 }
 
-func matches(for arguments: Arguments, command: String, limit: Int) throws -> [Match] {
+/// Name matches first; if there are none, the text of docsets Docent indexed itself.
+/// `searchedText` says which happened, so the command can tell the user.
+func matches(for arguments: Arguments, command: String, limit: Int,
+             searchedText: inout Bool) throws -> [Match] {
     let service = service(for: arguments)
     let query = try requireQuery(arguments, command: command)
     let docsets = try resolveDocsets(arguments, service: service)
-    let found = try service.find(query, limit: limit, in: docsets)
-    guard !found.isEmpty else {
-        throw CommandError("nothing matches \"\(safe(query))\"" + (service.docsets().isEmpty
-            ? ". No docsets are installed — run `docent list` to see where they go."
-            : ". Try fewer letters, or `docent list` to see what is installed."))
+
+    if !arguments.flags.contains("text") {
+        let found = try service.find(query, limit: limit, in: docsets)
+        if !found.isEmpty { return found }
     }
-    return found
+
+    let byText = try service.findInText(query, limit: limit, in: docsets)
+    if !byText.isEmpty {
+        searchedText = true
+        return byText
+    }
+
+    if arguments.flags.contains("text") {
+        throw CommandError(service.canSearchText(in: docsets)
+            ? "no page mentions \"\(safe(query))\"."
+            : "none of these docsets can be searched by text — only ones built with `docent index` carry it.")
+    }
+    throw CommandError("nothing matches \"\(safe(query))\"" + (service.docsets().isEmpty
+        ? ". No docsets are installed — run `docent list` to see where they go."
+        : ". Try fewer letters, or `docent list` to see what is installed."))
 }
 
 func runFind(_ arguments: Arguments) throws {
     let limit = try arguments.integer("limit", default: 20)
-    let found = try matches(for: arguments, command: "find", limit: limit)
+    var searchedText = false
+    let found = try matches(for: arguments, command: "find", limit: limit, searchedText: &searchedText)
 
     if arguments.flags.contains("json") {
         var objects: [[String: String]] = []
@@ -340,8 +362,13 @@ func runFind(_ arguments: Arguments) throws {
         return
     }
 
-    let nameWidth = min(52, found.map(\.entry.name.count).max() ?? 10)
-    let typeWidth = min(14, found.map(\.entry.type.count).max() ?? 6)
+    if searchedText {
+        print(out: dim(arguments.flags.contains("text")
+            ? "pages that mention it:"
+            : "no name matched — these pages mention it:"))
+    }
+    let nameWidth = min(searchedText ? 28 : 52, found.map(\.entry.name.count).max() ?? 10)
+    let typeWidth = min(searchedText ? 80 : 14, found.map(\.entry.type.count).max() ?? 6)
     for (offset, match) in found.enumerated() {
         let number = dim(String(format: "%2d.", offset + 1))
         let name = safe(match.entry.name).padding(toWidth: nameWidth)
@@ -360,7 +387,8 @@ func pick(_ found: [Match], arguments: Arguments) throws -> Match {
 
 func runShow(_ arguments: Arguments) throws {
     let limit = max(20, try arguments.integer("index", default: 1))
-    let found = try matches(for: arguments, command: "show", limit: limit)
+    var searchedText = false
+    let found = try matches(for: arguments, command: "show", limit: limit, searchedText: &searchedText)
     let match = try pick(found, arguments: arguments)
     let service = service(for: arguments)
 
@@ -593,7 +621,8 @@ func runIndex(_ arguments: Arguments) throws {
 
 func runPath(_ arguments: Arguments) throws {
     let limit = max(20, try arguments.integer("index", default: 1))
-    let found = try matches(for: arguments, command: "path", limit: limit)
+    var searchedText = false
+    let found = try matches(for: arguments, command: "path", limit: limit, searchedText: &searchedText)
     let match = try pick(found, arguments: arguments)
     let (url, anchor) = try service(for: arguments).location(of: match)
     print(out: safe(url.path + (anchor.map { "#\($0)" } ?? "")))

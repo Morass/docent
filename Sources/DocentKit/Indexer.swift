@@ -77,9 +77,18 @@ public struct Indexer {
         var files = 0
         var skipped = 0
         var contents: [(title: String, path: String)] = []
+        /// Page text, for the full-text table: searching your own documentation by heading
+        /// alone is not what anyone means by "search my docs".
+        var bodies: [(title: String, path: String, text: String)] = []
 
+        // Both sides resolved, and compared as a prefix rather than by length: a source
+        // under /var (which is /private/var) otherwise loses the first few characters of
+        // every relative path.
+        let rootPath = source.resolvingSymlinksInPath().standardizedFileURL.path
         for file in try documentationFiles() {
-            let relative = file.path.dropFirst(source.standardizedFileURL.path.count).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let filePath = file.resolvingSymlinksInPath().standardizedFileURL.path
+            guard filePath.hasPrefix(rootPath + "/") else { skipped += 1; continue }
+            let relative = String(filePath.dropFirst(rootPath.count + 1))
             guard let size = try? fm.attributesOfItem(atPath: file.path)[.size] as? Int, size <= Indexer.maxFileBytes else {
                 skipped += 1
                 continue
@@ -99,6 +108,7 @@ public struct Indexer {
                 let title = HTMLText.extractTitle(text) ?? relative
                 rows.append(IndexEntry(name: title, type: "Guide", path: pagePath))
                 contents.append((title, pagePath))
+                bodies.append((title, pagePath, HTMLText.render(text).text))
             } else {
                 let page = Markdown.render(text, fallbackTitle: relative)
                 try Markdown.document(page, sourcePath: relative).data(using: .utf8)!.write(to: target)
@@ -107,6 +117,7 @@ public struct Indexer {
                 for heading in page.headings where heading.level > 1 {
                     rows.append(IndexEntry(name: heading.text, type: "Section", path: "\(pagePath)#\(heading.anchor)"))
                 }
+                bodies.append((page.title, pagePath, text))
             }
             files += 1
         }
@@ -118,7 +129,9 @@ public struct Indexer {
             .write(to: documents.appendingPathComponent("index.html"))
         rows.append(IndexEntry(name: name, type: "Guide", path: "index.html"))
 
-        try write(rows, to: resources.appendingPathComponent("docSet.dsidx"))
+        let index = resources.appendingPathComponent("docSet.dsidx")
+        try write(rows, to: index)
+        try writeFullText(bodies, to: index)
         return Report(docset: bundle, files: files, entries: rows.count, skipped: skipped)
     }
 
@@ -126,7 +139,7 @@ public struct Indexer {
     /// symlinks left out — a link out of the tree would copy files nobody meant to index.
     func documentationFiles() throws -> [URL] {
         let fm = FileManager.default
-        let root = source.standardizedFileURL
+        let root = source.resolvingSymlinksInPath().standardizedFileURL
         guard let walker = fm.enumerator(at: root,
                                          includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey],
                                          options: [.skipsHiddenFiles]) else { return [] }
@@ -185,6 +198,39 @@ public struct Indexer {
         \(items)
         </ul></body></html>
         """
+    }
+
+    /// A full-text table beside the ordinary index.
+    ///
+    /// It lives in the same SQLite file under a name of Docent's own, so other docset
+    /// readers ignore it and the docset stays a perfectly ordinary docset.
+    private func writeFullText(_ bodies: [(title: String, path: String, text: String)], to url: URL) throws {
+        var handle: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let db = handle else {
+            throw Failure.cannotWrite(url.path)
+        }
+        defer { sqlite3_close(db) }
+
+        // FTS5 is part of the system SQLite, but a build without it should not lose the
+        // whole docset — the index is what matters, the text search is a bonus.
+        guard sqlite3_exec(db, "CREATE VIRTUAL TABLE docentText USING fts5(title, path UNINDEXED, body)", nil, nil, nil) == SQLITE_OK else {
+            return
+        }
+        sqlite3_exec(db, "BEGIN", nil, nil, nil)
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "INSERT INTO docentText(title, path, body) VALUES (?, ?, ?)", -1, &statement, nil) == SQLITE_OK else {
+            throw Failure.cannotWrite(url.path)
+        }
+        defer { sqlite3_finalize(statement) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        for body in bodies {
+            sqlite3_reset(statement)
+            sqlite3_bind_text(statement, 1, body.title, -1, transient)
+            sqlite3_bind_text(statement, 2, body.path, -1, transient)
+            sqlite3_bind_text(statement, 3, body.text, -1, transient)
+            guard sqlite3_step(statement) == SQLITE_DONE else { throw Failure.cannotWrite(url.path) }
+        }
+        sqlite3_exec(db, "COMMIT", nil, nil, nil)
     }
 
     private func write(_ rows: [IndexEntry], to url: URL) throws {

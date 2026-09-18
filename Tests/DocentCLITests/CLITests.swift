@@ -541,3 +541,31 @@ extension CLITests {
         XCTAssertTrue(run.err.contains("no Markdown or HTML"), run.err)
     }
 }
+
+extension CLITests {
+    /// The first thing the owner typed against an indexed repo matched nothing, because the
+    /// word was in the prose and not in a heading.
+    func testAWordInThePagesIsFoundWhenNoNameMatches() throws {
+        let repo = try makeRepo()
+        try "# Notes\n\nThe clipboard path is fiddly.\n".data(using: .utf8)!
+            .write(to: repo.appendingPathComponent("docs/notes.md"))
+        XCTAssertEqual(try docent(["index", repo.path, "--name", "Repo", "--keyword", "repo"], withDocsets: false).status, 0)
+
+        let run = try docent(["find", "repo:clipboard"], withDocsets: false)
+        XCTAssertEqual(run.status, 0, run.err)
+        XCTAssertTrue(run.out.contains("no name matched"), run.out)
+        XCTAssertTrue(run.out.contains("Notes"), run.out)
+        XCTAssertTrue(run.out.contains("clipboard"), "the snippet should quote the match: \(run.out)")
+
+        let shown = try docent(["show", "repo:clipboard"], withDocsets: false)
+        XCTAssertEqual(shown.status, 0, shown.err)
+        XCTAssertTrue(shown.out.contains("fiddly"), shown.out)
+    }
+
+    func testTextSearchOnADocsetThatCannotDoItSaysSo() throws {
+        try makeGopher()
+        let run = try docent(["find", "--text", "formatted"])
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("docent index"), run.err)
+    }
+}

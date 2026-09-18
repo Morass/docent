@@ -161,6 +161,50 @@ public final class SearchIndex {
         return rows
     }
 
+    /// Does this docset carry the full-text table `docent index` writes?
+    public var hasFullText: Bool {
+        guard let db else { return false }
+        return !SearchIndex.strings(db, sql: "SELECT name FROM sqlite_master WHERE type='table' AND name='docentText'").isEmpty
+    }
+
+    /// Pages whose *text* matches, for docsets Docent indexed itself. The query is passed to
+    /// FTS5 as a quoted phrase, so what the user typed is data and not an FTS expression.
+    public func textMatches(_ query: String, limit: Int = 50) throws -> [IndexEntry] {
+        let trimmed = query.trimmed
+        guard !trimmed.isEmpty, hasFullText else { return [] }
+        budget.ticks = 0
+
+        var statement: OpaquePointer?
+        let sql = """
+        SELECT title, path, snippet(docentText, 2, '', '', '…', 12) FROM docentText
+        WHERE docentText MATCH ? ORDER BY rank LIMIT ?
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SearchIndexError.query(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        let phrase = "\"" + trimmed.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(statement, 1, phrase, -1, transient)
+        sqlite3_bind_int(statement, 2, Int32(max(1, limit)))
+
+        var rows: [IndexEntry] = []
+        var step = sqlite3_step(statement)
+        while step == SQLITE_ROW {
+            if let title = sqlite3_column_text(statement, 0), let path = sqlite3_column_text(statement, 1) {
+                // One line: a snippet with the file's own newlines in it wrecks a table.
+                let snippet = (sqlite3_column_text(statement, 2).map { String(cString: $0) } ?? "").squeezed.trimmed
+                rows.append(IndexEntry(name: String(cString: title), type: snippet.nonEmpty ?? "Text", path: String(cString: path)))
+            }
+            step = sqlite3_step(statement)
+        }
+        if step == SQLITE_INTERRUPT {
+            throw SearchIndexError.query("this docset's index takes too long to search — it may be damaged")
+        }
+        return rows
+    }
+
     /// How many symbols the docset indexes. Counted by SQLite: building a million rows in
     /// memory to take `.count` of them is the same answer and a hundred times the work.
     public func symbolCount() throws -> Int {

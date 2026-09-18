@@ -107,7 +107,10 @@ docent find mine:install
 ```
 
 Every Markdown and HTML file becomes a page and every heading becomes an entry, so
-`docent show mine:"Running the tests"` prints that section and nothing else. Build folders,
+`docent show mine:"Running the tests"` prints that section and nothing else. Docsets built
+this way are also searchable by **text**: when nothing is *called* what you typed, Docent
+looks inside the pages and shows the ones that mention it, with the line it found —
+`docent find mine:clipboard`, or `--text` to search that way from the start. Build folders,
 `.git`, `node_modules` and the like are skipped, symlinks are not followed, and the folder
 you point at is never modified. `--out PATH` writes the docset somewhere instead of
 installing it.
@@ -149,7 +152,7 @@ docent find --help       # the same thing
 | Command | What it does |
 |---|---|
 | `docent list` | the docsets Docent can see, with their keywords and sizes |
-| `docent find <query>` | search every docset; `--limit`, `--docset`, `--json` |
+| `docent find <query>` | search every docset; `--limit`, `--docset`, `--text`, `--json` |
 | `docent show <query>` | print a symbol's documentation as text; `--all`, `--index N` |
 | `docent path <query>` | print the file (and anchor) a symbol lives in |
 | `docent add <path>` | install a `.docset` folder or a `.tgz` archive; `--replace` |
@@ -180,7 +183,8 @@ than followed.
 - No docset catalogue or downloader: you bring the docsets.
 - `docent show` renders a page as plain text. Tables come out as rows, diagrams and images
   do not come out at all — read those in the window.
-- Search is over symbol names, not the text of the pages.
+- Search is over symbol names. The text of the pages is searchable only for docsets built
+  with `docent index` — a docset from elsewhere carries an index of names and nothing else.
 - Syntax highlighting is a general-purpose guess, not a parser per language: it colours
   comments, strings, numbers, common keywords and capitalised names. A docset that already
   highlights its own code keeps its own colours.

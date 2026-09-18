@@ -18,13 +18,13 @@ final class IndexerTests: XCTestCase {
         try? FileManager.default.removeItem(at: root)
     }
 
-    private func write(_ text: String, to relative: String) throws {
+    fileprivate func write(_ text: String, to relative: String) throws {
         let url = source.appendingPathComponent(relative)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try text.data(using: .utf8)!.write(to: url)
     }
 
-    private func build() throws -> (Indexer.Report, Docset) {
+    fileprivate func build() throws -> (Indexer.Report, Docset) {
         let destination = root.appendingPathComponent("Repo.docset")
         let report = try Indexer(source: source, name: "Repo", keyword: "repo").build(into: destination)
         let docset = try XCTUnwrap(Docset(contentsOf: destination))
@@ -90,5 +90,57 @@ final class IndexerTests: XCTestCase {
         XCTAssertEqual(Indexer.pagePath(for: "docs/guide.md"), "docs/guide.html")
         XCTAssertEqual(Indexer.pagePath(for: "a b/c;d.markdown"), "a-b/c-d.html")
         XCTAssertEqual(Indexer.folderName(for: "My Project"), "My-Project.docset")
+    }
+}
+
+extension IndexerTests {
+    /// Searching your own documentation means the words in it, not just the headings — the
+    /// first thing the owner typed against an indexed repo matched nothing.
+    func testTheTextOfAPageIsSearchable() throws {
+        try write("# Notes\n\nThe clipboard path is fiddly on Sonoma.\n", to: "docs/notes.md")
+        let (_, docset) = try build()
+
+        let index = try SearchIndex(url: docset.indexURL)
+        XCTAssertTrue(index.hasFullText)
+        let hits = try index.textMatches("clipboard")
+        XCTAssertEqual(hits.map(\.name), ["Notes"])
+        XCTAssertTrue(hits.first?.path.hasPrefix("docs/notes.html") == true, "\(hits)")
+        XCTAssertTrue(hits.first?.type.contains("clipboard") == true, "the snippet should quote the match: \(hits)")
+    }
+
+    func testASnippetIsOneLine() throws {
+        try write("# Wrapped\n\nsomething\nacross\nlines about kerning\n", to: "docs/wrapped.md")
+        let (_, docset) = try build()
+        let hits = try SearchIndex(url: docset.indexURL).textMatches("kerning")
+        XCTAssertFalse(hits.first?.type.contains("\n") ?? true, "a snippet with newlines wrecks the listing")
+    }
+
+    func testAQueryIsAPhraseNotAnFTSExpression() throws {
+        try write("# Odd\n\nA line with OR and NEAR and a \"quote\".\n", to: "docs/odd.md")
+        let (_, docset) = try build()
+        let index = try SearchIndex(url: docset.indexURL)
+        XCTAssertNoThrow(try index.textMatches("OR"))
+        XCTAssertNoThrow(try index.textMatches("\"unbalanced"))
+        XCTAssertNoThrow(try index.textMatches("NEAR(a b)"))
+    }
+
+    func testAVendorDocsetHasNoTextTableAndSaysSo() throws {
+        let plain = try Fixture.docset(in: root.appendingPathComponent("plain", isDirectory: true))
+        XCTAssertFalse(try SearchIndex(url: plain.indexURL).hasFullText)
+        XCTAssertEqual(try SearchIndex(url: plain.indexURL).textMatches("anything"), [])
+    }
+}
+
+extension IndexerTests {
+    /// Relative paths used to be sliced by character count, which is wrong the moment the
+    /// source lives under a symlinked prefix like /var → /private/var.
+    func testPagePathsMirrorTheFolderExactly() throws {
+        let (_, docset) = try build()
+        let paths = try SearchIndex(url: docset.indexURL).candidates(matching: "").map(\.path)
+        XCTAssertTrue(paths.contains { $0.hasPrefix("docs/guide.html") }, "\(paths)")
+        XCTAssertTrue(paths.contains("README.html"), "\(paths)")
+        for path in paths {
+            XCTAssertNotNil(docset.fileURL(forPath: path), "\(path) does not resolve inside the docset")
+        }
     }
 }

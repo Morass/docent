@@ -73,6 +73,40 @@ public struct SearchService: Sendable {
         return Ranking.rank(candidates, query: query.text, limit: limit)
     }
 
+    /// Pages whose *text* mentions the query, for docsets Docent indexed itself.
+    ///
+    /// A docset from a vendor indexes symbols, and searching its prose is not something its
+    /// index can do. One built by `docent index` carries a full-text table, because "search
+    /// my own documentation" means the words in it, not just the headings.
+    public func findInText(
+        _ rawQuery: String,
+        limit: Int = 25,
+        in docsets: [Docset]? = nil
+    ) throws -> [Match] {
+        let query = Query(rawQuery)
+        var pool = docsets ?? library.docsets()
+        if let hint = query.docsetHint {
+            let filtered = pool.filter { matches(docset: $0, hint: hint) }
+            if !filtered.isEmpty { pool = filtered }
+        }
+        guard !query.text.isEmpty else { return [] }
+
+        var found: [Match] = []
+        for docset in pool {
+            guard let index = try? SearchIndex(url: docset.indexURL), index.hasFullText else { continue }
+            let rows = (try? index.textMatches(query.text, limit: limit)) ?? []
+            found.append(contentsOf: rows.map { Match(docset: docset, entry: $0, score: 0) })
+        }
+        return Array(found.prefix(limit))
+    }
+
+    /// Is a text search even possible here — did Docent build any of these docsets?
+    public func canSearchText(in docsets: [Docset]? = nil) -> Bool {
+        (docsets ?? library.docsets()).contains { docset in
+            (try? SearchIndex(url: docset.indexURL))?.hasFullText == true
+        }
+    }
+
     public enum PageError: Error, CustomStringConvertible {
         case missingFile(String)
         case unreadable(String)
