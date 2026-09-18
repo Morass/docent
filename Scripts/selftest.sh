@@ -11,6 +11,12 @@ trap 'rm -rf "$WORK"' EXIT
 
 "$ROOT/Scripts/make-fixture-docset.sh" "$WORK" >/dev/null
 
+# A second, *indexed* docset: the window behaves differently when page text can be searched,
+# and that difference is what the owner's first miss was about.
+mkdir -p "$WORK/notes"
+printf '# Notes\n\n## Kerning\n\nThe kerning table is fiddly.\n' > "$WORK/notes/notes.md"
+HOME="$WORK" "$ROOT/build/docent" index "$WORK/notes" --name Notes --keyword notes --out "$WORK/Notes.docset" >/dev/null
+
 for mode in browse page network escape theme; do
     HOME="$WORK" DOCENT_DOCSETS="$WORK" DOCENT_SELFTEST="$mode" "$APP"
 done

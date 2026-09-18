@@ -213,7 +213,8 @@ final class CLITests: XCTestCase {
         try makeGopher()
         let run = try docent(["find", "zzzz"])
         XCTAssertEqual(run.status, 1)
-        XCTAssertTrue(run.err.contains("nothing matches"), run.err)
+        XCTAssertTrue(run.err.contains("nothing is called"), run.err)
+        XCTAssertTrue(run.err.contains("docent index"), "it should say why the text was not searched: \(run.err)")
     }
 
     func testBadOptionValueIsExplained() throws {
@@ -567,5 +568,28 @@ extension CLITests {
         let run = try docent(["find", "--text", "formatted"])
         XCTAssertEqual(run.status, 1)
         XCTAssertTrue(run.err.contains("docent index"), run.err)
+    }
+}
+
+extension CLITests {
+    /// "Try fewer letters" is the wrong advice after a full-text search that also found
+    /// nothing — the owner read it as the tool not having searched.
+    func testAMissOnAnIndexedDocsetSaysTheTextWasSearchedToo() throws {
+        let repo = try makeRepo()
+        XCTAssertEqual(try docent(["index", repo.path, "--name", "Repo", "--keyword", "repo"], withDocsets: false).status, 0)
+        let run = try docent(["find", "repo:nosuchwordanywhere"], withDocsets: false)
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("no page"), run.err)
+        XCTAssertTrue(run.err.contains("lists what is indexed"), run.err)
+    }
+
+    /// `docent find repo:` shows what is in a docset.
+    func testADocsetAndNothingElseListsIt() throws {
+        let repo = try makeRepo()
+        XCTAssertEqual(try docent(["index", repo.path, "--name", "Repo", "--keyword", "repo"], withDocsets: false).status, 0)
+        let run = try docent(["find", "repo:"], withDocsets: false)
+        XCTAssertEqual(run.status, 0, run.err)
+        XCTAssertTrue(run.out.contains("Install"), run.out)
+        XCTAssertTrue(run.out.contains("Deploying"), run.out)
     }
 }

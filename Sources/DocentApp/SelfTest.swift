@@ -393,6 +393,17 @@ enum SelfTest {
             browser.searchAndWait()
             check(browser.results.isEmpty, "a query that matches nothing returned results")
             check(!browser.status.isEmpty, "a query that matches nothing said nothing to the user")
+            if browser.docsets.contains(where: { $0.keyword == "notes" }) {
+                check(browser.status.contains("no page mentions it"),
+                      "with an indexed docset installed, the window should say the text was searched too — said: \(browser.status)")
+            }
+
+            // Picking a docset with an empty field means "show me what is in here".
+            browser.query = ""
+            browser.docsetFilter = browser.docsets.first?.keyword ?? browser.docsets.first?.name
+            browser.searchAndWait()
+            check(!browser.results.isEmpty, "choosing a docset with an empty search field showed nothing")
+            browser.docsetFilter = nil
         }
         return failures
     }

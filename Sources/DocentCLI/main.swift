@@ -258,6 +258,8 @@ struct Arguments {
 
 // MARK: - Commands
 
+typealias Query = SearchService.Query
+
 func service(for arguments: Arguments) -> SearchService {
     SearchService(library: .standard())
 }
@@ -280,6 +282,12 @@ func requireQuery(_ arguments: Arguments, command: String) throws -> String {
         throw CommandError("\(command) needs something to look for. Try: docent \(command) NSPasteboard")
     }
     return arguments.positional.joined(separator: " ")
+}
+
+/// `docent find daub:` — a docset and nothing else means "show me what is in here".
+func isBrowseQuery(_ query: String) -> Bool {
+    guard let colon = query.firstIndex(of: ":") else { return false }
+    return String(query[query.index(after: colon)...]).trimmed.isEmpty
 }
 
 func runList(_ arguments: Arguments) throws {
@@ -320,6 +328,19 @@ func matches(for arguments: Arguments, command: String, limit: Int,
     let query = try requireQuery(arguments, command: command)
     let docsets = try resolveDocsets(arguments, service: service)
 
+    // `docent find daub:` lists the docset rather than complaining about an empty query.
+    if isBrowseQuery(query) {
+        let colon = query.firstIndex(of: ":")!
+        let hint = String(query[query.startIndex..<colon])
+        let pool = service.docsets().filter { service.matches(docset: $0, hint: hint) }
+        guard !pool.isEmpty else {
+            throw CommandError("no docset called \"\(safe(hint))\". Run `docent list` to see what is installed.")
+        }
+        let everything = try service.find("", limit: limit, in: pool)
+        guard !everything.isEmpty else { throw CommandError("\(safe(hint)) has no entries") }
+        return everything
+    }
+
     if !arguments.flags.contains("text") {
         let found = try service.find(query, limit: limit, in: docsets)
         if !found.isEmpty { return found }
@@ -331,14 +352,25 @@ func matches(for arguments: Arguments, command: String, limit: Int,
         return byText
     }
 
+    let searchable = service.canSearchText(in: docsets)
     if arguments.flags.contains("text") {
-        throw CommandError(service.canSearchText(in: docsets)
+        throw CommandError(searchable
             ? "no page mentions \"\(safe(query))\"."
             : "none of these docsets can be searched by text — only ones built with `docent index` carry it.")
     }
-    throw CommandError("nothing matches \"\(safe(query))\"" + (service.docsets().isEmpty
-        ? ". No docsets are installed — run `docent list` to see where they go."
-        : ". Try fewer letters, or `docent list` to see what is installed."))
+    if service.docsets().isEmpty {
+        throw CommandError("nothing matches \"\(safe(query))\". No docsets are installed — run `docent list` to see where they go.")
+    }
+    // Say what was actually looked at. "Try fewer letters" after a full-text search that
+    // also found nothing is advice for a search that did not happen.
+    let scope = Query(query).docsetHint.map { " in \(safe($0))" } ?? ""
+    if searchable {
+        throw CommandError("nothing is called \"\(safe(Query(query).text))\"\(scope), and no page there mentions it. "
+            + "`docent find\(scope.isEmpty ? "" : " " + Query(query).docsetHint! + ":")` lists what is indexed.")
+    }
+    throw CommandError("nothing is called \"\(safe(Query(query).text))\"\(scope). "
+        + "Searching page text needs a docset built with `docent index`; otherwise try fewer letters, "
+        + "or `docent list` to see what is installed.")
 }
 
 func runFind(_ arguments: Arguments) throws {

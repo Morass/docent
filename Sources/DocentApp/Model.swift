@@ -66,6 +66,11 @@ final class Browser: ObservableObject {
     func search() {
         let pool = docsetFilter.map { hint in docsets.filter { service.matches(docset: $0, hint: hint) } }
         let trimmed = query.trimmed
+        // Picking a docset with an empty search field means "show me what is in here".
+        if trimmed.isEmpty, let pool, !pool.isEmpty {
+            browse(pool)
+            return
+        }
         guard !trimmed.isEmpty else {
             results = []
             selection = nil
@@ -99,11 +104,38 @@ final class Browser: ObservableObject {
         }
     }
 
+    /// Everything in the selected docset, in index order.
+    private func browse(_ pool: [Docset]) {
+        generation += 1
+        let mine = generation
+        let searchService = service
+        queue.async { [weak self] in
+            let found = (try? searchService.find("", limit: 500, in: pool)) ?? []
+            DispatchQueue.main.async {
+                guard let self, self.generation == mine else { return }
+                self.results = found
+                self.status = found.isEmpty ? "This docset has no entries." : ""
+                if let current = self.selection, found.contains(where: { $0.id == current }) {
+                    self.completedGeneration = mine
+                    return
+                }
+                self.selection = found.first?.id
+                self.completedGeneration = mine
+            }
+        }
+    }
+
     private func apply(_ outcome: Result<[Match], Error>, for query: String) {
         switch outcome {
         case .success(let found):
             results = found
-            status = found.isEmpty ? "Nothing matches “\(query)”." : ""
+            // Say what was searched: with an indexed docset the page text was searched too,
+            // and "no matches" after that means something different.
+            status = found.isEmpty
+                ? (service.canSearchText()
+                   ? "Nothing is called “\(query)”, and no page mentions it."
+                   : "Nothing matches “\(query)”.")
+                : ""
             if let selection, found.contains(where: { $0.id == selection }) { return }
             selection = found.first?.id
         case .failure(let error):
