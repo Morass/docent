@@ -8,7 +8,7 @@ set -u
 cd "$(dirname "$0")/.."
 fail=0
 hit() { echo "✗ $1"; fail=1; }
-self=':!scripts/prepublish-check.sh'
+self=':!*prepublish-check.sh'   # matches wherever the script lives (Scripts/ or scripts/)
 
 while read -r e; do
 	case "$e" in
