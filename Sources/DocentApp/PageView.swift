@@ -1,0 +1,70 @@
+import SwiftUI
+import WebKit
+import DocentKit
+
+/// The page itself. A docset is someone else's HTML from the internet, so this web view is
+/// deliberately a reader and not a browser: no JavaScript, and nothing but files inside the
+/// docset may load. A link that points outside opens in the user's own browser, where they
+/// can see where it goes.
+struct PageView: NSViewRepresentable {
+    let location: (url: URL, anchor: String?)?
+    let documentsRoot: URL?
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.suppressesIncrementalRendering = false
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.navigationDelegate = context.coordinator
+        view.setValue(false, forKey: "drawsBackground")
+        return view
+    }
+
+    func updateNSView(_ view: WKWebView, context: Context) {
+        guard let location, let documentsRoot else {
+            view.loadHTMLString("", baseURL: nil)
+            context.coordinator.loaded = nil
+            return
+        }
+        var target = location.url
+        if let anchor = location.anchor,
+           var components = URLComponents(url: location.url, resolvingAgainstBaseURL: false) {
+            components.fragment = anchor
+            target = components.url ?? location.url
+        }
+        guard context.coordinator.loaded != target else { return }
+        context.coordinator.loaded = target
+        context.coordinator.root = documentsRoot
+        view.loadFileURL(target, allowingReadAccessTo: documentsRoot)
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var loaded: URL?
+        var root: URL?
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            guard let url = navigationAction.request.url else { return decisionHandler(.cancel) }
+
+            if url.isFileURL {
+                guard let root else { return decisionHandler(.cancel) }
+                let allowed = root.standardizedFileURL.path
+                let path = url.standardizedFileURL.path
+                decisionHandler(path == allowed || path.hasPrefix(allowed + "/") ? .allow : .cancel)
+                return
+            }
+
+            // Anything off the disk — an analytics beacon, a CDN font, a link someone
+            // clicked — leaves the reader. Docent itself never goes to the network.
+            if navigationAction.navigationType == .linkActivated {
+                NSWorkspace.shared.open(url)
+            }
+            decisionHandler(.cancel)
+        }
+    }
+}
