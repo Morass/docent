@@ -395,3 +395,43 @@ extension CLITests {
         sqlite.waitUntilExit()
     }
 }
+
+extension CLITests {
+    /// `tar -tvf` columns cannot be split on spaces: a member called `../out/file name`
+    /// leaves only "name" in the last column and walks past a naive check.
+    func testAnArchiveWhoseEscapingPathContainsSpacesIsRefused() throws {
+        let staging = root.appendingPathComponent("staging/sub")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try "x".data(using: .utf8)!.write(to: staging.appendingPathComponent("file name"))
+
+        let archive = root.appendingPathComponent("spaced.tar")
+        let tar = Process()
+        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        tar.arguments = ["-cf", archive.path, "-C", staging.path, "../sub/file name"]
+        try tar.run()
+        tar.waitUntilExit()
+
+        let run = try docent(["add", archive.path], withDocsets: false)
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("climbs out of it"), run.err)
+    }
+
+    /// A docset folder's own name is data too, and `--paths` prints it.
+    func testListPathsStripsControlCharactersFromTheFolderName() throws {
+        let nasty = docsets.appendingPathComponent("We\u{1B}[2Jird.docset")
+        let resources = nasty.appendingPathComponent("Contents/Resources")
+        try FileManager.default.createDirectory(at: resources.appendingPathComponent("Documents"), withIntermediateDirectories: true)
+        try PropertyListSerialization.data(fromPropertyList: ["CFBundleName": "Weird", "CFBundleIdentifier": "weird"], format: .xml, options: 0)
+            .write(to: nasty.appendingPathComponent("Contents/Info.plist"))
+        let sqlite = Process()
+        sqlite.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        sqlite.arguments = [resources.appendingPathComponent("docSet.dsidx").path,
+                            "CREATE TABLE searchIndex(id INTEGER PRIMARY KEY, name TEXT, type TEXT, path TEXT);"]
+        try sqlite.run()
+        sqlite.waitUntilExit()
+
+        let run = try docent(["list", "--paths"])
+        XCTAssertEqual(run.status, 0, run.err)
+        XCTAssertFalse(run.out.contains("\u{1B}"), run.out.debugDescription)
+    }
+}

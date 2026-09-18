@@ -205,7 +205,7 @@ enum SelfTest {
             }
             let allowed = root.standardizedFileURL.path
             let path = url.standardizedFileURL.path
-            if path == allowed || path.hasPrefix(allowed + "/") {
+            if (url.host == nil || url.host?.isEmpty == true), path == allowed || path.hasPrefix(allowed + "/") {
                 decisionHandler(.allow)
             } else {
                 cancelled += 1

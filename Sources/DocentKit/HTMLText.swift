@@ -379,7 +379,10 @@ extension String {
         var lines: [String] = []
         var blanks = 0
         for raw in split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = String(raw).replacingOccurrences(of: "[ \t]+$", with: "", options: .regularExpression)
+            // Trimmed by hand: compiling a regular expression per line turns a long page
+            // into minutes of work.
+            var line = String(raw)
+            while let last = line.last, last == " " || last == "\t" { line.removeLast() }
             if line.isEmpty {
                 blanks += 1
                 if blanks <= 1 { lines.append(line) }

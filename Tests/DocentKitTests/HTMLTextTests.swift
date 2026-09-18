@@ -136,3 +136,14 @@ extension HTMLTextTests {
         XCTAssertTrue(HTMLText.render("<p>&hellip;&mdash;&#x2014;</p>").text.contains("…—"))
     }
 }
+
+extension HTMLTextTests {
+    /// Trailing-whitespace trimming used to compile a regular expression per line.
+    func testAPageOfBlankLinesRendersQuickly() {
+        let html = "<p>start</p>" + String(repeating: "<br> \n", count: 60_000) + "<p>end</p>"
+        let started = Date()
+        let text = HTMLText.render(html).text
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5.0, "blank-line collapsing is too slow")
+        XCTAssertTrue(text.hasPrefix("start"), text.prefix(40).description)
+    }
+}

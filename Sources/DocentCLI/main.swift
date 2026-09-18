@@ -249,7 +249,7 @@ func runList(_ arguments: Arguments) throws {
         if let keyword = docset.keyword { line += dim("  \(safe(keyword)):") }
         if let count = try? symbolCount(of: docset) { line += dim("  \(count) symbols") }
         print(out: line)
-        if arguments.flags.contains("paths") { print(out: dim("    " + docset.url.path)) }
+        if arguments.flags.contains("paths") { print(out: dim("    " + safe(docset.url.path))) }
     }
 }
 
@@ -437,28 +437,36 @@ func runAdd(_ arguments: Arguments) throws {
 }
 
 /// Reads the archive's table of contents before unpacking a byte of it.
+///
+/// Names come from `tar -tf`, where one line is one whole path: the columns of `tar -tvf`
+/// cannot be split on spaces, because a member called `../escape/file name` would leave
+/// only "name" in the last column and walk straight past this check.
 func checkArchive(_ url: URL) throws {
-    let listing = try run("/usr/bin/tar", ["-tvf", url.path], failure: "could not read \(safe(url.lastPathComponent))")
+    let names = try run("/usr/bin/tar", ["-tf", url.path], failure: "could not read \(safe(url.lastPathComponent))")
     var entries = 0
-    var bytes = 0
-    for line in listing.split(separator: "\n") {
+    for line in names.split(separator: "\n") {
         entries += 1
-        let columns = line.split(separator: " ", omittingEmptySubsequences: true)
-        if columns.count > 4, let size = Int(columns[2]) { bytes += size }
-        if let name = columns.last {
-            let path = String(name)
-            if path.hasPrefix("/") || path.split(separator: "/").contains("..") {
-                throw CommandError("that archive contains a path that climbs out of it (\(safe(path))) — not unpacking it")
-            }
+        let path = String(line)
+        if path.hasPrefix("/") || path.hasPrefix("~") || path.split(separator: "/").contains("..") {
+            throw CommandError("that archive contains a path that climbs out of it (\(safe(path))) — not unpacking it")
         }
         if entries > AddLimits.maxEntries {
             throw CommandError("that archive contains more than \(AddLimits.maxEntries) files — not unpacking it")
         }
+    }
+    if entries == 0 { throw CommandError("that archive is empty") }
+
+    // Sizes come from the verbose listing, where only the size column is read — a number,
+    // never a name.
+    var bytes = 0
+    let listing = try run("/usr/bin/tar", ["-tvf", url.path], failure: "could not read \(safe(url.lastPathComponent))")
+    for line in listing.split(separator: "\n") {
+        let columns = line.split(separator: " ", omittingEmptySubsequences: true)
+        if columns.count > 4, let size = Int(columns[2]) { bytes += size }
         if bytes > AddLimits.maxBytes {
             throw CommandError("that archive unpacks to more than \(AddLimits.maxBytes / (1024 * 1024 * 1024)) GB — not unpacking it")
         }
     }
-    if entries == 0 { throw CommandError("that archive is empty") }
 }
 
 func unpack(_ url: URL, into directory: URL) throws {

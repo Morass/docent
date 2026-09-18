@@ -119,7 +119,10 @@ struct PageView: NSViewRepresentable {
             guard let url = navigationAction.request.url else { return decisionHandler(.cancel) }
 
             if url.isFileURL {
-                guard let root else { return decisionHandler(.cancel) }
+                // `file://host/share` is an SMB mount, not a local file.
+                guard let root, url.host == nil || url.host?.isEmpty == true else {
+                    return decisionHandler(.cancel)
+                }
                 let allowed = root.standardizedFileURL.path
                 let path = url.standardizedFileURL.path
                 decisionHandler(path == allowed || path.hasPrefix(allowed + "/") ? .allow : .cancel)

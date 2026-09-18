@@ -19,6 +19,9 @@ final class Browser: ObservableObject {
     /// to give up, and the window must keep drawing while it does.
     private let queue = DispatchQueue(label: "docent.search", qos: .userInitiated)
     private var generation = 0
+    /// The last search whose results have actually been applied. Without this, a waiter
+    /// cannot tell "no results yet" from "the previous query's results".
+    private(set) var completedGeneration = 0
     private var history: [Match] = []
     private var historyIndex: Int = -1
     private var restoringHistory = false
@@ -62,6 +65,8 @@ final class Browser: ObservableObject {
             results = []
             selection = nil
             if !docsets.isEmpty { status = "" }
+            generation += 1
+            completedGeneration = generation
             return
         }
 
@@ -78,6 +83,7 @@ final class Browser: ObservableObject {
             DispatchQueue.main.async {
                 guard let self, self.generation == mine else { return }   // a later search already won
                 self.apply(outcome, for: trimmed)
+                self.completedGeneration = mine
             }
         }
     }
@@ -99,11 +105,10 @@ final class Browser: ObservableObject {
     /// never needs it.
     func searchAndWait(timeout: TimeInterval = 10) {
         search()
-        let deadline = Date().addingTimeInterval(timeout)
         let wanted = generation
-        while Date() < deadline {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline, completedGeneration < wanted {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
-            if generation == wanted, !results.isEmpty || !status.isEmpty || query.trimmed.isEmpty { return }
         }
     }
 
