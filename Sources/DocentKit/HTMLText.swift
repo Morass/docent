@@ -264,6 +264,9 @@ public enum HTMLText {
         if html[cursor] == "/" {
             isClosing = true
             cursor = html.index(after: cursor)
+            // A page ending in `</` is two bytes of malformed HTML, and reading one
+            // character further is a crash in a tool people point at files they downloaded.
+            guard cursor < html.endIndex else { return nil }
         }
         if html[cursor] == "!" {  // comment or doctype
             if let close = html.range(of: ">", range: cursor..<html.endIndex) {
@@ -316,9 +319,11 @@ public enum HTMLText {
         var out = ""
         var index = text.startIndex
         while index < text.endIndex {
+            // Bounded lookahead: searching the whole remaining page for `;` at every `&`
+            // turns a page full of ampersands into quadratic work.
+            let horizon = text.index(index, offsetBy: 11, limitedBy: text.endIndex) ?? text.endIndex
             guard text[index] == "&",
-                  let semicolon = text.range(of: ";", range: index..<text.endIndex),
-                  text.distance(from: index, to: semicolon.lowerBound) <= 10
+                  let semicolon = text.range(of: ";", range: index..<horizon)
             else {
                 out.append(text[index])
                 index = text.index(after: index)

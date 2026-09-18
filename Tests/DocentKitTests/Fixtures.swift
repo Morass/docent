@@ -114,3 +114,30 @@ extension Fixture {
         sqlite3_exec(db, "CREATE TABLE somethingElse(a TEXT)", nil, nil, nil)
     }
 }
+
+extension Fixture {
+    /// Replaces the metadata table with a view that never stops producing rows — the shape
+    /// a review seat used to hang a search.
+    static func makeMetaInformationEndless(at url: URL) throws {
+        var handle: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let db = handle else {
+            throw NSError(domain: "Fixture", code: 5)
+        }
+        defer { sqlite3_close(db) }
+        for sql in [
+            "DROP TABLE ZTOKENMETAINFORMATION",
+            """
+            CREATE VIEW ZTOKENMETAINFORMATION AS
+            WITH RECURSIVE endless(n) AS (SELECT 1 UNION ALL SELECT n FROM endless)
+            SELECT 999 AS Z_PK, 1 AS ZFILE, NULL AS ZANCHOR FROM endless
+            """,
+        ] {
+            var error: UnsafeMutablePointer<CChar>?
+            if sqlite3_exec(db, sql, nil, nil, &error) != SQLITE_OK {
+                let message = error.map { String(cString: $0) } ?? "unknown"
+                sqlite3_free(error)
+                throw NSError(domain: "Fixture", code: 6, userInfo: [NSLocalizedDescriptionKey: message])
+            }
+        }
+    }
+}

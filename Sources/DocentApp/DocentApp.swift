@@ -7,6 +7,7 @@ struct DocentApp: App {
     @FocusState private var searchFocused: Bool
 
     init() {
+        RemoteContentBlock.prepare()
         SelfTest.runIfAsked()
     }
 

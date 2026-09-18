@@ -39,7 +39,19 @@ public final class SearchIndex {
         case coreData
     }
 
+    /// A budget for one query, counted by SQLite itself.
+    ///
+    /// A docset's index is a database file someone else built. A view defined as a
+    /// recursive query makes an ordinary `SELECT … LIMIT 20` run forever, and a limit on
+    /// *rows* cannot stop a join that never produces any. This stops it after a fixed
+    /// amount of work instead.
+    final class Budget {
+        var ticks = 0
+        var limit = 200_000
+    }
+
     private var db: OpaquePointer?
+    private let budget = Budget()
     let schema: Schema
 
     public init(url: URL) throws {
@@ -52,6 +64,13 @@ public final class SearchIndex {
             throw SearchIndexError.cannotOpen(message)
         }
         self.db = db
+
+        sqlite3_progress_handler(db, 1_000, { pointer in
+            guard let pointer else { return 0 }
+            let budget = Unmanaged<Budget>.fromOpaque(pointer).takeUnretainedValue()
+            budget.ticks += 1
+            return budget.ticks > budget.limit ? 1 : 0
+        }, Unmanaged.passUnretained(budget).toOpaque())
 
         let tables = Set(SearchIndex.strings(db, sql: "SELECT name FROM sqlite_master WHERE type='table'"))
         if tables.contains("searchIndex") {
@@ -105,6 +124,7 @@ public final class SearchIndex {
     /// `limit` caps what a single docset can contribute, so one enormous docset cannot
     /// crowd everything else out of a search across a library.
     public func candidates(matching query: String, limit: Int = 2000) throws -> [IndexEntry] {
+        budget.ticks = 0
         let trimmed = query.trimmed
         var sql = selectSQL
         if !trimmed.isEmpty {
@@ -127,13 +147,38 @@ public final class SearchIndex {
         sqlite3_bind_int(statement, parameter, Int32(max(1, limit)))
 
         var rows: [IndexEntry] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard let name = sqlite3_column_text(statement, 0),
-                  let path = sqlite3_column_text(statement, 2) else { continue }
-            let type = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
-            rows.append(IndexEntry(name: String(cString: name), type: type, path: String(cString: path)))
+        var step = sqlite3_step(statement)
+        while step == SQLITE_ROW {
+            if let name = sqlite3_column_text(statement, 0), let path = sqlite3_column_text(statement, 2) {
+                let type = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
+                rows.append(IndexEntry(name: String(cString: name), type: type, path: String(cString: path)))
+            }
+            step = sqlite3_step(statement)
+        }
+        if step == SQLITE_INTERRUPT {
+            throw SearchIndexError.query("this docset's index takes too long to search — it may be damaged")
         }
         return rows
+    }
+
+    /// How many symbols the docset indexes. Counted by SQLite: building a million rows in
+    /// memory to take `.count` of them is the same answer and a hundred times the work.
+    public func symbolCount() throws -> Int {
+        budget.ticks = 0
+        let sql: String
+        switch schema {
+        case .searchIndex: sql = "SELECT count(*) FROM searchIndex"
+        case .coreData: sql = "SELECT count(*) FROM ZTOKEN"
+        }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SearchIndexError.query(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw SearchIndexError.query("could not count the symbols in this docset")
+        }
+        return Int(sqlite3_column_int64(statement, 0))
     }
 
     /// `%f%o%o%` — every character of the query, in order, anywhere in the name.

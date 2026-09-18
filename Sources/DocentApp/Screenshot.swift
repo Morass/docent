@@ -24,7 +24,7 @@ enum Screenshot {
         // the web view finish drawing the page it was given.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             browser.query = query
-            browser.search()
+            browser.searchAndWait()
             resizeWindow()
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 snapshotWebView {

@@ -107,3 +107,27 @@ final class SearchTests: XCTestCase {
         XCTAssertEqual(try service.find("Widget").count, 0, "a broken docset is skipped, not fatal")
     }
 }
+
+extension SearchTests {
+    /// An index is a database file someone else built. A view defined as a recursive query
+    /// makes an ordinary search run forever, and a row limit cannot stop a join that never
+    /// produces a row — so SQLite itself is given a budget.
+    func testAHostileIndexIsAbandonedRatherThanHangingForever() throws {
+        let docset = try Fixture.docset(in: root, schema: .coreData)
+        try Fixture.makeMetaInformationEndless(at: docset.indexURL)
+
+        let index = try SearchIndex(url: docset.indexURL)
+        let started = Date()
+        XCTAssertThrowsError(try index.candidates(matching: "Widget")) { error in
+            XCTAssertTrue("\(error)".contains("too long"), "\(error)")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 20, "the budget did not stop the query")
+    }
+
+    func testSymbolCountMatchesTheRows() throws {
+        let docset = try Fixture.docset(in: root, rows: [
+            .init("A", "Class", "a.html"), .init("B", "Class", "b.html"), .init("C", "Class", "c.html"),
+        ])
+        XCTAssertEqual(try SearchIndex(url: docset.indexURL).symbolCount(), 3)
+    }
+}

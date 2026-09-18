@@ -302,3 +302,96 @@ extension CLITests {
         XCTAssertTrue(run.err.contains("nothing at"), run.err)
     }
 }
+
+// MARK: - The findings a review panel raised
+
+extension CLITests {
+    /// A symbol name is docset data. Printing its control characters lets a docset clear
+    /// or repaint the reader's terminal.
+    func testEscapeSequencesInADocsetCannotReachTheTerminal() throws {
+        try makeDocset(named: "Nasty", identifier: "nasty", keyword: "nasty", rows: [
+            ("\u{1B}[2J\u{1B}[HOwned", "Class", "page.html"),
+        ], page: "<p>text \u{1B}[31mred\u{1B}[0m</p>")
+        for arguments in [["find", "Owned"], ["show", "Owned"], ["list"]] {
+            let run = try docent(arguments)
+            XCTAssertFalse(run.out.contains("\u{1B}"), "escape characters reached stdout from \(arguments): \(run.out.debugDescription)")
+        }
+    }
+
+    /// `~` has to mean the home Docent is using, not the account's real home.
+    func testTildeFollowsTheEnvironmentsHome() throws {
+        try makeGopher()
+        let downloads = home.appendingPathComponent("Downloads")
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: docsets.appendingPathComponent("Gopher.docset"),
+                                         to: downloads.appendingPathComponent("Gopher.docset"))
+        let run = try docent(["add", "~/Downloads/Gopher.docset"], withDocsets: false)
+        XCTAssertEqual(run.status, 0, run.err)
+        XCTAssertTrue(run.out.contains("added Gopher"), run.out)
+    }
+
+    /// Re-adding an installed docset over itself used to delete it.
+    func testAddingADocsetFromTheLibraryToItselfIsRefused() throws {
+        try makeGopher()
+        XCTAssertEqual(try docent(["add", docsets.appendingPathComponent("Gopher.docset").path], withDocsets: false).status, 0)
+        let installed = home.appendingPathComponent("Library/Application Support/Docent/DocSets/Gopher.docset")
+
+        let run = try docent(["add", installed.path, "--replace"], withDocsets: false)
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("already in your library"), run.err)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: installed.path), "the docset must still be there")
+    }
+
+    func testAnArchiveWithAnAbsolutePathIsRefused() throws {
+        let staging = root.appendingPathComponent("staging")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try "x".data(using: .utf8)!.write(to: staging.appendingPathComponent("payload"))
+        let archive = root.appendingPathComponent("evil.tar")
+        let tar = Process()
+        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        // -P keeps the absolute path in the archive, which is what an attacker would ship.
+        tar.arguments = ["-cPf", archive.path, staging.appendingPathComponent("payload").path]
+        try tar.run()
+        tar.waitUntilExit()
+
+        let run = try docent(["add", archive.path], withDocsets: false)
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("climbs out of it"), run.err)
+    }
+
+    func testADocsetWhoseLinkPointsOutsideItselfIsNotInstalled() throws {
+        try makeGopher()
+        let documents = docsets.appendingPathComponent("Gopher.docset/Contents/Resources/Documents")
+        try FileManager.default.createSymbolicLink(at: documents.appendingPathComponent("escape.html"),
+                                                  withDestinationURL: URL(fileURLWithPath: "/etc/hosts"))
+        let run = try docent(["add", docsets.appendingPathComponent("Gopher.docset").path], withDocsets: false)
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("outside itself"), run.err)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: home.appendingPathComponent("Library/Application Support/Docent/DocSets/Gopher.docset").path))
+    }
+
+    /// Helper for docsets with awkward content.
+    func makeDocset(named name: String, identifier: String, keyword: String,
+                    rows: [(String, String, String)], page: String) throws {
+        let bundle = docsets.appendingPathComponent("\(name).docset")
+        let resources = bundle.appendingPathComponent("Contents/Resources")
+        let documents = resources.appendingPathComponent("Documents")
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        let info: [String: Any] = ["CFBundleName": name, "CFBundleIdentifier": identifier, "DocSetPlatformFamily": keyword]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: bundle.appendingPathComponent("Contents/Info.plist"))
+        try page.data(using: .utf8)!.write(to: documents.appendingPathComponent("page.html"))
+
+        var sql = "CREATE TABLE searchIndex(id INTEGER PRIMARY KEY, name TEXT, type TEXT, path TEXT);"
+        for row in rows {
+            let escaped = row.0.replacingOccurrences(of: "'", with: "''")
+            sql += "INSERT INTO searchIndex(name,type,path) VALUES ('\(escaped)','\(row.1)','\(row.2)');"
+        }
+        let sqlite = Process()
+        sqlite.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        sqlite.arguments = [resources.appendingPathComponent("docSet.dsidx").path, sql]
+        try sqlite.run()
+        sqlite.waitUntilExit()
+    }
+}

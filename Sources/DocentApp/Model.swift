@@ -15,6 +15,10 @@ final class Browser: ObservableObject {
 
     private let service: SearchService
     private var searchWorkItem: DispatchWorkItem?
+    /// Searching happens off the main thread: a damaged or hostile index can take seconds
+    /// to give up, and the window must keep drawing while it does.
+    private let queue = DispatchQueue(label: "docent.search", qos: .userInitiated)
+    private var generation = 0
     private var history: [Match] = []
     private var historyIndex: Int = -1
     private var restoringHistory = false
@@ -60,15 +64,46 @@ final class Browser: ObservableObject {
             if !docsets.isEmpty { status = "" }
             return
         }
-        do {
-            let found = try service.find(trimmed, limit: 200, in: pool)
+
+        generation += 1
+        let mine = generation
+        let searchService = self.service
+        queue.async { [weak self] in
+            let outcome: Result<[Match], Error>
+            do {
+                outcome = .success(try searchService.find(trimmed, limit: 200, in: pool))
+            } catch {
+                outcome = .failure(error)
+            }
+            DispatchQueue.main.async {
+                guard let self, self.generation == mine else { return }   // a later search already won
+                self.apply(outcome, for: trimmed)
+            }
+        }
+    }
+
+    private func apply(_ outcome: Result<[Match], Error>, for query: String) {
+        switch outcome {
+        case .success(let found):
             results = found
-            status = found.isEmpty ? "Nothing matches “\(trimmed)”." : ""
+            status = found.isEmpty ? "Nothing matches “\(query)”." : ""
             if let selection, found.contains(where: { $0.id == selection }) { return }
             selection = found.first?.id
-        } catch {
+        case .failure(let error):
             results = []
             status = "\(error)"
+        }
+    }
+
+    /// The same search, run and applied before returning. The self-test uses it; the window
+    /// never needs it.
+    func searchAndWait(timeout: TimeInterval = 10) {
+        search()
+        let deadline = Date().addingTimeInterval(timeout)
+        let wanted = generation
+        while Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            if generation == wanted, !results.isEmpty || !status.isEmpty || query.trimmed.isEmpty { return }
         }
     }
 

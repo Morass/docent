@@ -112,3 +112,27 @@ extension HTMLTextTests {
         XCTAssertTrue(text.contains("func Println"), text)
     }
 }
+
+extension HTMLTextTests {
+    /// Two bytes of malformed HTML used to be a crash. Unparseable markup now falls
+    /// through as ordinary text, which is what a browser does with it too.
+    func testATruncatedTagDoesNotCrash() {
+        XCTAssertEqual(HTMLText.render("</").text, "</")
+        XCTAssertEqual(HTMLText.render("<").text, "<")
+        XCTAssertTrue(HTMLText.render("<p>fine</p></").text.hasPrefix("fine"))
+        XCTAssertEqual(HTMLText.render("<!").text, "<!")
+        XCTAssertTrue(HTMLText.render("<p>a</p><img").text.hasPrefix("a"))
+    }
+
+    /// A page full of ampersands used to cost a scan of the whole remaining page each time.
+    func testManyAmpersandsRenderQuickly() {
+        let html = "<p>" + String(repeating: "&", count: 200_000) + "</p>"
+        let started = Date()
+        _ = HTMLText.render(html).text
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3.0, "entity decoding is scanning too far ahead")
+    }
+
+    func testEntityLookaheadStillDecodesLongNames() {
+        XCTAssertTrue(HTMLText.render("<p>&hellip;&mdash;&#x2014;</p>").text.contains("…—"))
+    }
+}

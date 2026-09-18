@@ -1,5 +1,6 @@
 import Foundation
 import WebKit
+import Network
 import DocentKit
 
 /// End-to-end checks that need the real app rather than the library: the model, the
@@ -15,6 +16,7 @@ enum SelfTest {
         switch mode {
         case "browse": failures = browse()
         case "page": failures = MainActor.assumeIsolated { page() }
+        case "network": failures = MainActor.assumeIsolated { network() }
         default:
             FileHandle.standardError.write(Data("selftest: no mode called \"\(mode)\"\n".utf8))
             exit(2)
@@ -98,6 +100,95 @@ enum SelfTest {
         return failures
     }
 
+    /// Proves the claim that a docset cannot phone home. A page with an `<img>` pointing at
+    /// a listener on this machine is loaded; the listener must never hear from it.
+    @MainActor
+    private static func network() -> [String] {
+        var failures: [String] = []
+        let listener = Beacon()
+        guard let port = listener.start() else { return ["could not open a local listener to test against"] }
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("docent-network-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let page = directory.appendingPathComponent("beacon.html")
+        let html = """
+        <html><body><h1>Beacon</h1>
+        <img src="http://127.0.0.1:\(port)/pixel.png">
+        <link rel="stylesheet" href="http://127.0.0.1:\(port)/style.css">
+        </body></html>
+        """
+        try? html.data(using: .utf8)!.write(to: page)
+
+        var ready = false
+        RemoteContentBlock.prepare { ready = true }
+        let compileDeadline = Date().addingTimeInterval(10)
+        while !ready, Date() < compileDeadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        guard let list = RemoteContentBlock.ruleList else { return ["the network block list did not compile"] }
+
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        // The negative control: with the block left out, the beacon must fire. A test that
+        // cannot fail proves nothing, and this one is the whole privacy claim.
+        let control = ProcessInfo.processInfo.environment["DOCENT_SELFTEST_NO_BLOCK"] != nil
+        if !control { configuration.userContentController.add(list) }
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), configuration: configuration)
+        let probe = LoadProbe()
+        probe.root = URL(fileURLWithPath: directory.path, isDirectory: true)
+        webView.navigationDelegate = probe
+        webView.loadFileURL(page, allowingReadAccessTo: probe.root!)
+
+        let deadline = Date().addingTimeInterval(6)
+        while Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+            if listener.hits > 0 { break }
+        }
+        if probe.finished == nil { failures.append("the beacon page never loaded, so the test proved nothing") }
+        if listener.hits > 0 {
+            failures.append("a page reached the network \(listener.hits) time(s) — a docset can tell its author when you read it")
+        }
+        listener.stop()
+        if control {
+            return failures.isEmpty
+                ? ["negative control: without the block list the beacon did NOT fire, so this test cannot prove anything"]
+                : []
+        }
+        return failures
+    }
+
+    /// A socket on localhost that counts anyone who connects.
+    private final class Beacon: @unchecked Sendable {
+        private var listener: NWListener?
+        private let lock = NSLock()
+        private var count = 0
+
+        var hits: Int {
+            lock.lock(); defer { lock.unlock() }
+            return count
+        }
+
+        func start() -> UInt16? {
+            guard let listener = try? NWListener(using: .tcp, on: .any) else { return nil }
+            self.listener = listener
+            listener.newConnectionHandler = { [weak self] connection in
+                self?.lock.lock()
+                self?.count += 1
+                self?.lock.unlock()
+                connection.cancel()
+            }
+            listener.start(queue: .global())
+            let deadline = Date().addingTimeInterval(3)
+            while listener.port == nil, Date() < deadline {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            }
+            return listener.port?.rawValue
+        }
+
+        func stop() { listener?.cancel() }
+    }
+
     /// The same policy the app uses, with a record of what it did.
     @MainActor
     private final class LoadProbe: NSObject, WKNavigationDelegate {
@@ -146,7 +237,7 @@ enum SelfTest {
             check(!browser.docsets.isEmpty, "no docsets visible — set DOCENT_DOCSETS to a folder holding one")
 
             browser.query = "Print"
-            browser.search()
+            browser.searchAndWait()
             check(!browser.results.isEmpty, "searching for Print found nothing")
             check(browser.selection != nil, "a search left nothing selected")
 
@@ -170,7 +261,7 @@ enum SelfTest {
             check(browser.selectedMatch?.id == second?.id, "going forward did not return to the second symbol")
 
             browser.query = "zzzzzzzz"
-            browser.search()
+            browser.searchAndWait()
             check(browser.results.isEmpty, "a query that matches nothing returned results")
             check(!browser.status.isEmpty, "a query that matches nothing said nothing to the user")
         }

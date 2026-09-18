@@ -31,6 +31,10 @@ let useColour: Bool = {
     return isatty(STDOUT_FILENO) == 1
 }()
 
+/// Everything that came out of a docset goes through here before it is printed: a symbol
+/// name is data, and a terminal acts on control characters in it.
+func safe(_ text: String) -> String { SafeText.terminal(text) }
+
 func dim(_ text: String) -> String { useColour ? "\u{1B}[2m\(text)\u{1B}[0m" : text }
 func bold(_ text: String) -> String { useColour ? "\u{1B}[1m\(text)\u{1B}[0m" : text }
 
@@ -208,10 +212,10 @@ func resolveDocsets(_ arguments: Arguments, service: SearchService) throws -> [D
     let all = service.docsets()
     let matching = all.filter { service.matches(docset: $0, hint: wanted) }
     guard !matching.isEmpty else {
-        let known = all.map { $0.keyword ?? $0.name }.joined(separator: ", ")
+        let known = all.map { safe($0.keyword ?? $0.name) }.joined(separator: ", ")
         throw CommandError(known.isEmpty
             ? "no docsets installed, so --docset \(wanted) matches nothing"
-            : "no docset called \"\(wanted)\". Installed: \(known)")
+            : "no docset called \"\(safe(wanted))\". Installed: \(known)")
     }
     return matching
 }
@@ -241,8 +245,8 @@ func runList(_ arguments: Arguments) throws {
         return
     }
     for docset in docsets {
-        var line = bold(docset.name)
-        if let keyword = docset.keyword { line += dim("  \(keyword):") }
+        var line = bold(safe(docset.name))
+        if let keyword = docset.keyword { line += dim("  \(safe(keyword)):") }
         if let count = try? symbolCount(of: docset) { line += dim("  \(count) symbols") }
         print(out: line)
         if arguments.flags.contains("paths") { print(out: dim("    " + docset.url.path)) }
@@ -250,8 +254,7 @@ func runList(_ arguments: Arguments) throws {
 }
 
 func symbolCount(of docset: Docset) throws -> Int {
-    let index = try SearchIndex(url: docset.indexURL)
-    return try index.candidates(matching: "", limit: 1_000_000).count
+    try SearchIndex(url: docset.indexURL).symbolCount()
 }
 
 func matches(for arguments: Arguments, command: String, limit: Int) throws -> [Match] {
@@ -260,7 +263,7 @@ func matches(for arguments: Arguments, command: String, limit: Int) throws -> [M
     let docsets = try resolveDocsets(arguments, service: service)
     let found = try service.find(query, limit: limit, in: docsets)
     guard !found.isEmpty else {
-        throw CommandError("nothing matches \"\(query)\"" + (service.docsets().isEmpty
+        throw CommandError("nothing matches \"\(safe(query))\"" + (service.docsets().isEmpty
             ? ". No docsets are installed — run `docent list` to see where they go."
             : ". Try fewer letters, or `docent list` to see what is installed."))
     }
@@ -291,9 +294,9 @@ func runFind(_ arguments: Arguments) throws {
     let typeWidth = min(14, found.map(\.entry.type.count).max() ?? 6)
     for (offset, match) in found.enumerated() {
         let number = dim(String(format: "%2d.", offset + 1))
-        let name = match.entry.name.padding(toWidth: nameWidth)
-        let type = dim(match.entry.type.padding(toWidth: typeWidth))
-        print(out: "\(number) \(bold(name))  \(type)  \(dim(match.docset.name))")
+        let name = safe(match.entry.name).padding(toWidth: nameWidth)
+        let type = dim(safe(match.entry.type).padding(toWidth: typeWidth))
+        print(out: "\(number) \(bold(name))  \(type)  \(dim(safe(match.docset.name)))")
     }
 }
 
@@ -320,12 +323,12 @@ func runShow(_ arguments: Arguments) throws {
         page = try service.page(for: match)
     }
 
-    var header = bold(match.entry.name)
-    if !match.entry.type.isEmpty { header += dim("  \(match.entry.type)") }
-    header += dim("  \(match.docset.name)")
+    var header = bold(safe(match.entry.name))
+    if !match.entry.type.isEmpty { header += dim("  \(safe(match.entry.type))") }
+    header += dim("  \(safe(match.docset.name))")
     print(out: header)
     print(out: dim(String(repeating: "─", count: 60)))
-    print(out: page.text.isEmpty ? dim("(this page has no text — try --all, or `docent path` to open it)") : page.text)
+    print(out: page.text.isEmpty ? dim("(this page has no text — try --all, or `docent path` to open it)") : safe(page.text))
 
     if found.count > 1 {
         print(out: "")
@@ -333,60 +336,99 @@ func runShow(_ arguments: Arguments) throws {
     }
 }
 
+/// `~` means the home Docent is using, which is `$HOME`. Foundation's own
+/// `expandingTildeInPath` asks the password database instead, so it would quietly reach
+/// into the real account's home from inside a sandbox or a test.
+func expandTilde(_ path: String) -> String {
+    guard path == "~" || path.hasPrefix("~/") else { return path }
+    let home = Home.directory().path
+    return path == "~" ? home : home + String(path.dropFirst(1))
+}
+
+/// A docset is an archive from the internet. `add` therefore treats it as hostile until it
+/// has been looked at: what the archive claims to contain, how much it unpacks to, whether
+/// anything in it points outside itself, and whether it is a docset at all.
+enum AddLimits {
+    static let maxEntries = 200_000
+    static let maxBytes = 4 * 1024 * 1024 * 1024   // 4 GB unpacked
+}
+
 func runAdd(_ arguments: Arguments) throws {
     guard let source = arguments.positional.first else {
         throw CommandError("add needs a .docset folder or an archive. Try: docent add ~/Downloads/Go.docset")
     }
     let fm = FileManager.default
-    let sourceURL = URL(fileURLWithPath: (source as NSString).expandingTildeInPath).standardizedFileURL
+    let sourceURL = URL(fileURLWithPath: expandTilde(source)).standardizedFileURL
     guard fm.fileExists(atPath: sourceURL.path) else {
-        throw CommandError("there is nothing at \(sourceURL.path)")
+        throw CommandError("there is nothing at \(safe(sourceURL.path))")
     }
 
     let destinationRoot = Home.docsetsDirectory()
     try fm.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
 
-    let staged: URL
+    // Adding a docset from the library back into the library would delete it: the old copy
+    // is removed before the new one is written, and they are the same folder.
+    let resolvedSource = sourceURL.resolvingSymlinksInPath().path
+    let resolvedRoot = destinationRoot.resolvingSymlinksInPath().path
+    if resolvedSource == resolvedRoot || resolvedSource.hasPrefix(resolvedRoot + "/") {
+        throw CommandError("that docset is already in your library — adding it to itself would delete it")
+    }
+
     let scratch = fm.temporaryDirectory.appendingPathComponent("docent-add-\(UUID().uuidString)")
     defer { try? fm.removeItem(at: scratch) }
 
+    let staged: URL
     if sourceURL.pathExtension == "docset" {
         staged = sourceURL
-    } else if ["tgz", "gz", "tar"].contains(sourceURL.pathExtension) {
+    } else if ["tgz", "gz", "tar", "bz2", "xz"].contains(sourceURL.pathExtension) {
+        try checkArchive(sourceURL)
         try fm.createDirectory(at: scratch, withIntermediateDirectories: true)
-        let tar = Process()
-        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        tar.arguments = ["-xf", sourceURL.path, "-C", scratch.path]
-        try tar.run()
-        tar.waitUntilExit()
-        guard tar.terminationStatus == 0 else { throw CommandError("could not unpack \(sourceURL.lastPathComponent)") }
+        try unpack(sourceURL, into: scratch)
         guard let found = DocsetLibrary.docsetURLs(under: scratch).first else {
             throw CommandError("that archive holds no .docset folder")
         }
         staged = found
     } else {
-        throw CommandError("add takes a .docset folder or a .tgz archive, not \(sourceURL.lastPathComponent)")
+        throw CommandError("add takes a .docset folder or a .tgz archive, not \(safe(sourceURL.lastPathComponent))")
     }
 
     guard let docset = Docset(contentsOf: staged) else {
-        throw CommandError("\(staged.lastPathComponent) is not a usable docset — it has no index or no Documents folder")
+        throw CommandError("\(safe(staged.lastPathComponent)) is not a usable docset — it has no index or no Documents folder")
+    }
+    if let escaping = firstEscapingLink(in: staged) {
+        throw CommandError("this docset contains a link pointing outside itself (\(safe(escaping))) — not installing it")
     }
 
     let destination = destinationRoot.appendingPathComponent(staged.lastPathComponent)
-    if fm.fileExists(atPath: destination.path) {
-        guard arguments.flags.contains("replace") else {
-            throw CommandError("\(staged.lastPathComponent) is already installed. Pass --replace to overwrite it.")
-        }
-        try fm.removeItem(at: destination)
-    }
-    if staged == sourceURL {
-        try fm.copyItem(at: staged, to: destination)
-    } else {
-        try fm.moveItem(at: staged, to: destination)
+    let alreadyThere = fm.fileExists(atPath: destination.path)
+    if alreadyThere, !arguments.flags.contains("replace") {
+        throw CommandError("\(safe(staged.lastPathComponent)) is already installed. Pass --replace to overwrite it.")
     }
 
-    var line = "added \(bold(docset.name))"
-    if let keyword = docset.keyword { line += " (\(keyword):)" }
+    // Put the new copy in place first, then remove the old one: a failure halfway through
+    // must not leave the user with neither.
+    let incoming = destinationRoot.appendingPathComponent(".docent-incoming-\(UUID().uuidString)")
+    if staged == sourceURL {
+        try fm.copyItem(at: staged, to: incoming)
+    } else {
+        try fm.moveItem(at: staged, to: incoming)
+    }
+
+    let displaced = destinationRoot.appendingPathComponent(".docent-replaced-\(UUID().uuidString)")
+    do {
+        if alreadyThere { try fm.moveItem(at: destination, to: displaced) }
+        try fm.moveItem(at: incoming, to: destination)
+    } catch {
+        try? fm.removeItem(at: incoming)
+        if fm.fileExists(atPath: displaced.path), !fm.fileExists(atPath: destination.path) {
+            try? fm.moveItem(at: displaced, to: destination)
+        }
+        throw CommandError("could not install \(safe(staged.lastPathComponent)): \(error.localizedDescription)")
+    }
+    if fm.fileExists(atPath: displaced.path) { try? fm.removeItem(at: displaced) }
+
+    var line = "added \(bold(safe(docset.name)))"
+    if let keyword = docset.keyword { line += " (\(safe(keyword)):)" }
     if let installed = Docset(contentsOf: destination), let count = try? symbolCount(of: installed) {
         line += " — \(count) symbols"
     }
@@ -394,12 +436,73 @@ func runAdd(_ arguments: Arguments) throws {
     print(out: dim("  " + destination.path))
 }
 
+/// Reads the archive's table of contents before unpacking a byte of it.
+func checkArchive(_ url: URL) throws {
+    let listing = try run("/usr/bin/tar", ["-tvf", url.path], failure: "could not read \(safe(url.lastPathComponent))")
+    var entries = 0
+    var bytes = 0
+    for line in listing.split(separator: "\n") {
+        entries += 1
+        let columns = line.split(separator: " ", omittingEmptySubsequences: true)
+        if columns.count > 4, let size = Int(columns[2]) { bytes += size }
+        if let name = columns.last {
+            let path = String(name)
+            if path.hasPrefix("/") || path.split(separator: "/").contains("..") {
+                throw CommandError("that archive contains a path that climbs out of it (\(safe(path))) — not unpacking it")
+            }
+        }
+        if entries > AddLimits.maxEntries {
+            throw CommandError("that archive contains more than \(AddLimits.maxEntries) files — not unpacking it")
+        }
+        if bytes > AddLimits.maxBytes {
+            throw CommandError("that archive unpacks to more than \(AddLimits.maxBytes / (1024 * 1024 * 1024)) GB — not unpacking it")
+        }
+    }
+    if entries == 0 { throw CommandError("that archive is empty") }
+}
+
+func unpack(_ url: URL, into directory: URL) throws {
+    _ = try run("/usr/bin/tar", ["-xf", url.path, "-C", directory.path],
+                failure: "could not unpack \(safe(url.lastPathComponent))")
+}
+
+@discardableResult
+func run(_ tool: String, _ arguments: [String], failure: String) throws -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: tool)
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    do { try process.run() } catch { throw CommandError(failure) }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { throw CommandError(failure) }
+    return String(data: data, encoding: .utf8) ?? ""
+}
+
+/// The first symlink inside the docset that resolves outside it, if there is one.
+func firstEscapingLink(in docset: URL) -> String? {
+    let fm = FileManager.default
+    let root = docset.resolvingSymlinksInPath().standardizedFileURL.path
+    guard let walker = fm.enumerator(at: docset, includingPropertiesForKeys: [.isSymbolicLinkKey],
+                                     options: []) else { return nil }
+    for case let url as URL in walker {
+        guard (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true else { continue }
+        let target = url.resolvingSymlinksInPath().standardizedFileURL.path
+        if target != root, !target.hasPrefix(root + "/") {
+            return url.lastPathComponent
+        }
+    }
+    return nil
+}
+
 func runPath(_ arguments: Arguments) throws {
     let limit = max(20, try arguments.integer("index", default: 1))
     let found = try matches(for: arguments, command: "path", limit: limit)
     let match = try pick(found, arguments: arguments)
     let (url, anchor) = try service(for: arguments).location(of: match)
-    print(out: url.path + (anchor.map { "#\($0)" } ?? ""))
+    print(out: safe(url.path + (anchor.map { "#\($0)" } ?? "")))
 }
 
 extension String {

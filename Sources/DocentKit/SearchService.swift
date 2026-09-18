@@ -76,14 +76,22 @@ public struct SearchService: Sendable {
     public enum PageError: Error, CustomStringConvertible {
         case missingFile(String)
         case unreadable(String)
+        case tooLarge(path: String, bytes: Int)
 
         public var description: String {
             switch self {
             case .missingFile(let path): return "that page is not in the docset: \(path)"
             case .unreadable(let path): return "cannot read that page: \(path)"
+            case .tooLarge(let path, let bytes):
+                let megabytes = Double(bytes) / 1_048_576
+                return String(format: "that page is %.0f MB, too big to print as text — open it instead: %@", megabytes, path)
             }
         }
     }
+
+    /// A documentation page is a few hundred kilobytes. Anything past this is either broken
+    /// or hostile, and rendering it would hold several copies of it in memory.
+    public static let pageSizeLimit = 16 * 1024 * 1024
 
     /// The file a match points at, plus its anchor — what the app hands to a web view.
     public func location(of match: Match) throws -> (url: URL, anchor: String?) {
@@ -99,6 +107,10 @@ public struct SearchService: Sendable {
     /// The page as text — what the command prints.
     public func page(for match: Match) throws -> RenderedPage {
         let (url, anchor) = try location(of: match)
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil
+        if let size, size > SearchService.pageSizeLimit {
+            throw PageError.tooLarge(path: url.path, bytes: size)
+        }
         guard let data = try? Data(contentsOf: url) else { throw PageError.unreadable(url.path) }
         let html = String(data: data, encoding: .utf8)
             ?? String(data: data, encoding: .isoLatin1)
