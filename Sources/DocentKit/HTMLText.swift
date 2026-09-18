@@ -348,20 +348,22 @@ extension String {
         return out
     }
 
+    /// Whitespace-only lines become empty, and a run of empty lines becomes one. Trimming
+    /// has to happen *first*: a line holding a single space is a blank line to a reader but
+    /// not to a newline count, which is how three blank lines survive a naive collapse.
     var collapsingBlankLines: String {
-        var out = ""
-        var newlines = 0
-        for character in self {
-            if character == "\n" {
-                newlines += 1
-                if newlines <= 2 { out.append(character) }
+        var lines: [String] = []
+        var blanks = 0
+        for raw in split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(raw).replacingOccurrences(of: "[ \t]+$", with: "", options: .regularExpression)
+            if line.isEmpty {
+                blanks += 1
+                if blanks <= 1 { lines.append(line) }
             } else {
-                newlines = 0
-                out.append(character)
+                blanks = 0
+                lines.append(line)
             }
         }
-        return out.split(separator: "\n", omittingEmptySubsequences: false)
-            .map { $0.hasSuffix(" ") ? String($0).trimmingCharacters(in: .whitespaces) : String($0) }
-            .joined(separator: "\n")
+        return lines.joined(separator: "\n")
     }
 }

@@ -27,5 +27,12 @@ let package = Package(
             dependencies: ["DocentKit"],
             path: "Tests/DocentKitTests"
         ),
+        // End-to-end: runs the real `docent` binary against a docset built in a temporary
+        // folder, with a sandboxed HOME, so nothing here can read the machine it runs on.
+        .testTarget(
+            name: "DocentCLITests",
+            dependencies: ["DocentKit", "docent"],
+            path: "Tests/DocentCLITests"
+        ),
     ]
 )

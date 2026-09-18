@@ -73,3 +73,14 @@ final class HTMLTextTests: XCTestCase {
         XCTAssertTrue(text.contains("c | d"), text)
     }
 }
+
+extension HTMLTextTests {
+    func testAtMostOneBlankLineAndNoWhitespaceOnlyLines() {
+        let html = "<h2>Title</h2>\n  \n<pre>code()</pre>\n \n<p>Body.</p>"
+        let text = HTMLText.render(html).text
+        XCTAssertFalse(text.contains("\n\n\n"), text.debugDescription)
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            XCTAssertFalse(!line.isEmpty && line.allSatisfy(\.isWhitespace), "whitespace-only line in \(text.debugDescription)")
+        }
+    }
+}

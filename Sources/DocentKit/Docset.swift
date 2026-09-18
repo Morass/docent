@@ -82,6 +82,6 @@ public struct Docset: Hashable, Sendable, Comparable {
 }
 
 extension String {
-    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
-    var nonEmpty: String? { isEmpty ? nil : self }
+    public var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+    public var nonEmpty: String? { isEmpty ? nil : self }
 }
