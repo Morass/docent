@@ -59,6 +59,7 @@ public struct Docset: Hashable, Sendable, Comparable {
     /// Paths that try to climb out of the docset return nil: an index is data, and a
     /// malicious or broken one must not be able to name `../../../etc/passwd`.
     public func fileURL(forPath path: String) -> URL? {
+        let path = Docset.normalizedPath(path)
         let withoutAnchor = String(path.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0])
         let cleaned = withoutAnchor.removingPercentEncoding ?? withoutAnchor
         guard !cleaned.isEmpty else { return nil }
@@ -68,12 +69,25 @@ public struct Docset: Hashable, Sendable, Comparable {
         return resolved
     }
 
-    /// The `#anchor` part of a docset path, if it has one.
+    /// The `#anchor` part of a docset path, if it has one. Left percent-encoded: Dash
+    /// writes `//dash_ref_example%2DPrintln/...` into both the index *and* the page, so
+    /// decoding here would stop the two from matching.
     public static func anchor(in path: String) -> String? {
+        let path = Docset.normalizedPath(path)
         guard let hash = path.firstIndex(of: "#") else { return nil }
         let raw = String(path[path.index(after: hash)...])
-        guard !raw.isEmpty else { return nil }
-        return raw.removingPercentEncoding ?? raw
+        return raw.nonEmpty
+    }
+
+    /// Strips the `<dash_entry_name=…>` directives Dash prefixes some index paths with.
+    /// They are display hints for Dash's own sidebar, not part of the path, and a docset
+    /// built in the last few years is full of them.
+    public static func normalizedPath(_ path: String) -> String {
+        var rest = Substring(path)
+        while rest.hasPrefix("<"), let close = rest.firstIndex(of: ">") {
+            rest = rest[rest.index(after: close)...]
+        }
+        return String(rest)
     }
 
     public static func < (lhs: Docset, rhs: Docset) -> Bool {

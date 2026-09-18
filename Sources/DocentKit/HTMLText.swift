@@ -92,7 +92,19 @@ public enum HTMLText {
     }
 
     private static func anchorRange(in html: String, anchor: String) -> Range<String.Index>? {
-        let escaped = anchor
+        // Try the anchor exactly as the index spells it, then percent-decoded: docsets are
+        // inconsistent about which form ends up in the page.
+        var spellings = [anchor]
+        if let decoded = anchor.removingPercentEncoding, decoded != anchor { spellings.append(decoded) }
+        // `//dash_ref_example-Println/Sample/Println/0` also appears as a plain `id`.
+        for spelling in spellings {
+            if spelling.hasPrefix("//"), let bare = spelling.split(separator: "/").dropFirst(2).first {
+                let trimmed = bare.replacingOccurrences(of: "dash_ref_", with: "")
+                    .replacingOccurrences(of: "apple_ref_", with: "")
+                if !trimmed.isEmpty { spellings.append(trimmed) }
+            }
+        }
+        for escaped in spellings {
         for attribute in ["name", "id"] {
             for quote in ["\"", "'"] {
                 let needle = "\(attribute)=\(quote)\(escaped)\(quote)"
@@ -104,6 +116,7 @@ public enum HTMLText {
                     return found
                 }
             }
+        }
         }
         return nil
     }
@@ -133,7 +146,9 @@ public enum HTMLText {
         for level in 1...max(1, maxLevel) {
             consider(html.range(of: "<h\(level)", options: .caseInsensitive, range: tail), isHeading: true, level: level)
         }
-        consider(html.range(of: "<a name=\"//apple_ref", options: .caseInsensitive, range: tail), isHeading: false, level: 0)
+        for marker in ["<a name=\"//apple_ref", "<a name=\"//dash_ref"] {
+            consider(html.range(of: marker, options: .caseInsensitive, range: tail), isHeading: false, level: 0)
+        }
         return best
     }
 
@@ -223,6 +238,10 @@ public enum HTMLText {
         flushText()
 
         return out
+            // Permalink glyphs: every page generator leaves one beside each heading, and
+            // they are navigation, not text.
+            .replacingOccurrences(of: "¶", with: "")
+            .replacingOccurrences(of: "🔗", with: "")
             .replacingOccurrences(of: " | \n", with: "\n")
             .replacingOccurrences(of: "``", with: "")
             .collapsingBlankLines

@@ -104,3 +104,21 @@ extension DocsetTests {
         XCTAssertTrue(paths.allSatisfy { $0.hasPrefix("/tmp/pretend-home/") }, "\(paths)")
     }
 }
+
+extension DocsetTests {
+    /// Paths in a modern Dash docset are not plain paths: they carry display directives and
+    /// percent-encoded `//dash_ref_…` anchors, and a reader that takes them literally finds
+    /// no file at all.
+    func testDashEntryDirectivesAreStrippedFromPaths() throws {
+        let docset = try Fixture.docset(in: root, pages: ["pkg/fmt.html": "<p>x</p>"])
+        let path = "<dash_entry_name=Println><dash_entry_menuDescription=fmt>pkg/fmt.html#//dash_ref_Println/Function/Println/0"
+        XCTAssertEqual(Docset.normalizedPath(path), "pkg/fmt.html#//dash_ref_Println/Function/Println/0")
+        XCTAssertEqual(docset.fileURL(forPath: path)?.lastPathComponent, "fmt.html")
+        XCTAssertEqual(Docset.anchor(in: path), "//dash_ref_Println/Function/Println/0")
+    }
+
+    func testAnchorKeepsItsPercentEncoding() {
+        XCTAssertEqual(Docset.anchor(in: "p.html#//dash_ref_example%2DPrintln/Sample/Println/0"),
+                       "//dash_ref_example%2DPrintln/Sample/Println/0")
+    }
+}
