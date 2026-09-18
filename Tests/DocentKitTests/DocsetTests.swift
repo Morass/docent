@@ -89,3 +89,18 @@ final class DocsetTests: XCTestCase {
         XCTAssertTrue(DocsetLibrary(searchPaths: [linked]).docsets().isEmpty)
     }
 }
+
+extension DocsetTests {
+    /// `FileManager.homeDirectoryForCurrentUser` ignores `HOME`, so a tool built on it
+    /// writes to the real library even when a caller has carefully redirected HOME.
+    func testHomeFollowsTheEnvironment() {
+        XCTAssertEqual(Home.directory(environment: ["HOME": "/tmp/pretend-home"]).path, "/tmp/pretend-home")
+        XCTAssertEqual(Home.docsetsDirectory(environment: ["HOME": "/tmp/pretend-home"]).path,
+                       "/tmp/pretend-home/Library/Application Support/Docent/DocSets")
+    }
+
+    func testSearchPathsFollowTheEnvironmentsHome() {
+        let paths = DocsetLibrary.defaultSearchPaths(environment: ["HOME": "/tmp/pretend-home"]).map(\.path)
+        XCTAssertTrue(paths.allSatisfy { $0.hasPrefix("/tmp/pretend-home/") }, "\(paths)")
+    }
+}

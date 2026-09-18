@@ -237,3 +237,68 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(run.err.contains("past the end"), run.err)
     }
 }
+
+// MARK: - Installing docsets
+
+extension CLITests {
+    /// `add` writes into the library under HOME, which is why every case here runs with a
+    /// HOME of its own: the tests install docsets and then look for them, without ever
+    /// touching the library of whoever runs them.
+    func testAddInstallsAFolderAndListFindsIt() throws {
+        try makeGopher()
+        let source = docsets.appendingPathComponent("Gopher.docset")
+        let run = try docent(["add", source.path], withDocsets: false)
+        XCTAssertEqual(run.status, 0, run.err)
+        XCTAssertTrue(run.out.contains("added Gopher"), run.out)
+
+        let installed = home.appendingPathComponent("Library/Application Support/Docent/DocSets/Gopher.docset")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: installed.path))
+
+        let list = try docent(["list"], withDocsets: false)
+        XCTAssertTrue(list.out.contains("Gopher"), list.out)
+        XCTAssertTrue(list.out.contains("3 symbols"), list.out)
+    }
+
+    func testAddRefusesToOverwriteWithoutBeingAsked() throws {
+        try makeGopher()
+        let source = docsets.appendingPathComponent("Gopher.docset").path
+        XCTAssertEqual(try docent(["add", source], withDocsets: false).status, 0)
+
+        let second = try docent(["add", source], withDocsets: false)
+        XCTAssertEqual(second.status, 1)
+        XCTAssertTrue(second.err.contains("--replace"), second.err)
+
+        let forced = try docent(["add", source, "--replace"], withDocsets: false)
+        XCTAssertEqual(forced.status, 0, forced.err)
+    }
+
+    func testAddUnpacksAnArchive() throws {
+        try makeGopher()
+        let archive = root.appendingPathComponent("gopher.tgz")
+        let tar = Process()
+        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        tar.arguments = ["-czf", archive.path, "-C", docsets.path, "Gopher.docset"]
+        try tar.run()
+        tar.waitUntilExit()
+
+        let run = try docent(["add", archive.path], withDocsets: false)
+        XCTAssertEqual(run.status, 0, run.err)
+        XCTAssertTrue(run.out.contains("added Gopher"), run.out)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: home.appendingPathComponent("Library/Application Support/Docent/DocSets/Gopher.docset").path))
+    }
+
+    func testAddRejectsSomethingThatIsNotADocset() throws {
+        let folder = root.appendingPathComponent("NotADocset.docset")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let run = try docent(["add", folder.path], withDocsets: false)
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("not a usable docset"), run.err)
+    }
+
+    func testAddSaysSoWhenThePathDoesNotExist() throws {
+        let run = try docent(["add", root.appendingPathComponent("nope.docset").path], withDocsets: false)
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("nothing at"), run.err)
+    }
+}

@@ -14,8 +14,9 @@ public struct DocsetLibrary: Sendable {
     /// the real machine unless a person asked it to.
     public static func defaultSearchPaths(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        home: URL = FileManager.default.homeDirectoryForCurrentUser
+        home: URL? = nil
     ) -> [URL] {
+        let home = home ?? Home.directory(environment: environment)
         if let override = environment["DOCENT_DOCSETS"]?.trimmed, !override.isEmpty {
             return override.split(separator: ":").map { URL(fileURLWithPath: String($0)) }
         }
@@ -28,7 +29,7 @@ public struct DocsetLibrary: Sendable {
 
     public static func standard(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        home: URL = FileManager.default.homeDirectoryForCurrentUser
+        home: URL? = nil
     ) -> DocsetLibrary {
         DocsetLibrary(searchPaths: defaultSearchPaths(environment: environment, home: home))
     }
@@ -52,7 +53,7 @@ public struct DocsetLibrary: Sendable {
     /// docsets under a vendor folder). Symlinks are not followed: a docset is a folder of
     /// someone else's HTML, and following links out of it is how a reader ends up printing
     /// a file nobody meant to publish.
-    static func docsetURLs(under root: URL) -> [URL] {
+    public static func docsetURLs(under root: URL) -> [URL] {
         let fm = FileManager.default
         func children(_ url: URL) -> [URL] {
             (try? fm.contentsOfDirectory(

@@ -45,6 +45,7 @@ let helpSummaries: [(String, String)] = [
     ("find", "search every docset for a symbol"),
     ("show", "print a symbol's documentation as text"),
     ("path", "print the file a symbol lives in"),
+    ("add", "put a docset into your library"),
     ("help", "help for a command"),
 ]
 
@@ -137,6 +138,23 @@ let commandHelp: [String: String] = [
 
     Prints the HTML file on disk, with the anchor if the docset points at one. Useful for
     opening a page in something else: `open "$(docent path NSPasteboard)"`.
+    """,
+    "add": """
+    docent add — put a docset into your library.
+
+    USAGE
+      docent add <folder.docset | archive.tgz> [--replace]
+
+    OPTIONS
+      --replace   overwrite a docset of the same name that is already installed
+
+    Copies a docset into ~/Library/Application Support/Docent/DocSets, which is where both
+    the command and the app look for it. A `.tgz` or `.tar.gz` holding a docset is unpacked
+    for you. Nothing is downloaded — point this at a folder or an archive you already have.
+
+    EXAMPLES
+      docent add ~/Downloads/Go.docset
+      docent add ~/Downloads/Python_3.tgz
     """,
     "help": """
     docent help — help for a command.
@@ -315,6 +333,67 @@ func runShow(_ arguments: Arguments) throws {
     }
 }
 
+func runAdd(_ arguments: Arguments) throws {
+    guard let source = arguments.positional.first else {
+        throw CommandError("add needs a .docset folder or an archive. Try: docent add ~/Downloads/Go.docset")
+    }
+    let fm = FileManager.default
+    let sourceURL = URL(fileURLWithPath: (source as NSString).expandingTildeInPath).standardizedFileURL
+    guard fm.fileExists(atPath: sourceURL.path) else {
+        throw CommandError("there is nothing at \(sourceURL.path)")
+    }
+
+    let destinationRoot = Home.docsetsDirectory()
+    try fm.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+
+    let staged: URL
+    let scratch = fm.temporaryDirectory.appendingPathComponent("docent-add-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: scratch) }
+
+    if sourceURL.pathExtension == "docset" {
+        staged = sourceURL
+    } else if ["tgz", "gz", "tar"].contains(sourceURL.pathExtension) {
+        try fm.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let tar = Process()
+        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        tar.arguments = ["-xf", sourceURL.path, "-C", scratch.path]
+        try tar.run()
+        tar.waitUntilExit()
+        guard tar.terminationStatus == 0 else { throw CommandError("could not unpack \(sourceURL.lastPathComponent)") }
+        guard let found = DocsetLibrary.docsetURLs(under: scratch).first else {
+            throw CommandError("that archive holds no .docset folder")
+        }
+        staged = found
+    } else {
+        throw CommandError("add takes a .docset folder or a .tgz archive, not \(sourceURL.lastPathComponent)")
+    }
+
+    guard let docset = Docset(contentsOf: staged) else {
+        throw CommandError("\(staged.lastPathComponent) is not a usable docset — it has no index or no Documents folder")
+    }
+
+    let destination = destinationRoot.appendingPathComponent(staged.lastPathComponent)
+    if fm.fileExists(atPath: destination.path) {
+        guard arguments.flags.contains("replace") else {
+            throw CommandError("\(staged.lastPathComponent) is already installed. Pass --replace to overwrite it.")
+        }
+        try fm.removeItem(at: destination)
+    }
+    if staged == sourceURL {
+        try fm.copyItem(at: staged, to: destination)
+    } else {
+        try fm.moveItem(at: staged, to: destination)
+    }
+
+    var line = "added \(bold(docset.name))"
+    if let keyword = docset.keyword { line += " (\(keyword):)" }
+    if let installed = Docset(contentsOf: destination), let count = try? symbolCount(of: installed) {
+        line += " — \(count) symbols"
+    }
+    print(out: line)
+    print(out: dim("  " + destination.path))
+}
+
 func runPath(_ arguments: Arguments) throws {
     let limit = max(20, try arguments.integer("index", default: 1))
     let found = try matches(for: arguments, command: "path", limit: limit)
@@ -374,6 +453,7 @@ do {
     case "find": try runFind(arguments)
     case "show": try runShow(arguments)
     case "path": try runPath(arguments)
+    case "add": try runAdd(arguments)
     default: throw CommandError("no command called \"\(command)\"")
     }
 } catch let error as CommandError {
