@@ -76,7 +76,7 @@ else
 fi
 
 run "docent show Nothing-Like-This; echo exit=\$?"
-check "a miss explains itself" "nothing matches"
+check "a miss explains itself" "nothing is called"
 check "a miss exits non-zero" "exit=1"
 
 if [ "$fail" -eq 0 ]; then
