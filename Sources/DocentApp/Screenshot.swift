@@ -37,7 +37,7 @@ enum Screenshot {
 
     private static func resizeWindow() {
         guard let window = mainWindow() else { return }
-        window.setFrame(NSRect(x: 0, y: 0, width: 1240, height: 780), display: true)
+        window.setFrame(NSRect(x: 0, y: 0, width: 1340, height: 820), display: true)
         window.center()
     }
 

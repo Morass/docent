@@ -43,11 +43,12 @@ struct BrowserWindow: View {
     @FocusState private var searchFocused: Bool
 
     var body: some View {
-        NavigationSplitView {
+        // A plain split view rather than NavigationSplitView: its sidebar column is drawn
+        // by AppKit outside the window's layer tree, which makes it impossible to capture
+        // and gives nothing back in a three-pane reader like this one.
+        HSplitView {
             sidebar
-        } content: {
             searchColumn
-        } detail: {
             page
         }
         .onAppear { searchFocused = true }
@@ -75,7 +76,7 @@ struct BrowserWindow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color(nsColor: .controlBackgroundColor))
-        .navigationSplitViewColumnWidth(min: 180, ideal: 220)
+        .frame(minWidth: 160, idealWidth: 210, maxWidth: 320)
     }
 
     private func docsetRow(title: String, keyword: String?, tag: String?) -> some View {
@@ -122,7 +123,7 @@ struct BrowserWindow: View {
             results
         }
         .background(Color(nsColor: .textBackgroundColor))
-        .navigationSplitViewColumnWidth(min: 240, ideal: 320)
+        .frame(minWidth: 240, idealWidth: 300, maxWidth: 480)
     }
 
     private var results: some View {
@@ -158,14 +159,15 @@ struct BrowserWindow: View {
         Group {
             if let match = browser.selectedMatch, let location = browser.location(of: match) {
                 PageView(location: location, documentsRoot: match.docset.readAccessURL)
-                    .navigationTitle(match.entry.name)
-                    .navigationSubtitle(match.docset.name)
+                    .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                    .navigationTitle("\(match.entry.name) — \(match.docset.name)")
             } else {
                 ContentUnavailableView(
                     "Nothing selected",
                     systemImage: "book.closed",
                     description: Text(browser.docsets.isEmpty ? Browser.emptyLibraryMessage : "Pick a result to read it.")
                 )
+                .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
