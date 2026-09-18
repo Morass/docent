@@ -475,3 +475,69 @@ extension CLITests {
         XCTAssertTrue(whole.out.contains("café"), "--all lost the encoding fallback: \(whole.out)")
     }
 }
+
+// MARK: - Indexing a folder
+
+extension CLITests {
+    private func makeRepo() throws -> URL {
+        let repo = root.appendingPathComponent("repo", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("docs"), withIntermediateDirectories: true)
+        try "# Repo\n\nIntro.\n\n## Install\n\nRun `make`.\n".data(using: .utf8)!
+            .write(to: repo.appendingPathComponent("README.md"))
+        try "# Guide\n\n## Deploying\n\nPush it.\n".data(using: .utf8)!
+            .write(to: repo.appendingPathComponent("docs/guide.md"))
+        return repo
+    }
+
+    func testIndexInstallsAFolderAndItBecomesSearchable() throws {
+        let repo = try makeRepo()
+        let indexed = try docent(["index", repo.path, "--name", "My Repo", "--keyword", "mine"], withDocsets: false)
+        XCTAssertEqual(indexed.status, 0, indexed.err)
+        XCTAssertTrue(indexed.out.contains("indexed My Repo"), indexed.out)
+        XCTAssertTrue(indexed.out.contains("2 files"), indexed.out)
+
+        let found = try docent(["find", "mine:Deploying"], withDocsets: false)
+        XCTAssertEqual(found.status, 0, found.err)
+        XCTAssertTrue(found.out.contains("Deploying"), found.out)
+
+        let shown = try docent(["show", "mine:Install"], withDocsets: false)
+        XCTAssertEqual(shown.status, 0, shown.err)
+        XCTAssertTrue(shown.out.contains("Run `make`"), shown.out)
+        XCTAssertFalse(shown.out.contains("Intro."), "a heading entry should land on its section: \(shown.out)")
+    }
+
+    func testIndexToAFileInsteadOfTheLibrary() throws {
+        let repo = try makeRepo()
+        let out = root.appendingPathComponent("Built.docset")
+        let run = try docent(["index", repo.path, "--out", out.path], withDocsets: false)
+        XCTAssertEqual(run.status, 0, run.err)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.appendingPathComponent("Contents/Resources/docSet.dsidx").path))
+        XCTAssertTrue(run.out.contains("docent add"), "it should say how to install it: \(run.out)")
+        // Nothing was installed.
+        let list = try docent(["list"], withDocsets: false)
+        XCTAssertTrue(list.out.contains("No docsets found"), list.out)
+    }
+
+    func testIndexingTwiceNeedsReplace() throws {
+        let repo = try makeRepo()
+        XCTAssertEqual(try docent(["index", repo.path, "--name", "Repo"], withDocsets: false).status, 0)
+        let second = try docent(["index", repo.path, "--name", "Repo"], withDocsets: false)
+        XCTAssertEqual(second.status, 1)
+        XCTAssertTrue(second.err.contains("--replace"), second.err)
+        XCTAssertEqual(try docent(["index", repo.path, "--name", "Repo", "--replace"], withDocsets: false).status, 0)
+    }
+
+    func testIndexingSomethingThatIsNotAFolderIsExplained() throws {
+        let run = try docent(["index", root.appendingPathComponent("nope").path], withDocsets: false)
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("no folder"), run.err)
+    }
+
+    func testIndexingAFolderWithNoDocumentationIsExplained() throws {
+        let empty = root.appendingPathComponent("empty", isDirectory: true)
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        let run = try docent(["index", empty.path], withDocsets: false)
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("no Markdown or HTML"), run.err)
+    }
+}

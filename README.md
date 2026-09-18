@@ -11,6 +11,8 @@ them, in an app and in a command you can pipe.
 
 - **Search** every docset at once, exactly or loosely: `NSPast` finds `NSPasteboard`.
 - **Read** a symbol's page in the window, or print it as text with `docent show`.
+- **Index your own** documentation: point `docent index` at a repository and its Markdown
+  becomes searchable next to everything else.
 - **Read comfortably.** Pages are painted to match the app — light or dark, your choice —
   and code blocks are syntax-highlighted even when the docset ships them plain.
 - **Keep it offline.** Docent never opens a network connection, and pages you read cannot
@@ -52,6 +54,7 @@ DOCENT_APP_DIR=~/Applications DOCENT_BIN_DIR=~/.local/bin make install
 
 ```sh
 docent add ~/Downloads/Go.tgz     # put a docset in your library
+docent index ~/code/myproject     # make one out of a repository's own docs
 docent list                       # what is installed
 docent find Println               # search every docset
 docent show go:Println            # print the documentation as text
@@ -66,7 +69,10 @@ Docent reads docsets; it does not host or sell them. Three ways to get one:
   folders as they are — nothing to copy.
 - **Download one** from the docset feeds those apps use, then add the archive:
   `docent add ~/Downloads/Python_3.tgz`.
-- **Build one from any documentation** with [doc2dash](https://github.com/hynek/doc2dash),
+- **Index a folder you have**: `docent index ~/code/myproject` walks it for Markdown and
+  HTML, renders each file, indexes every heading, and installs the result. Your own project's
+  documentation then searches like any other docset.
+- **Build one from generated docs** with [doc2dash](https://github.com/hynek/doc2dash),
   which turns Sphinx, MkDocs and similar output into a docset:
   `doc2dash -n MyLib docs/_build/html && docent add MyLib.docset`.
 
@@ -93,7 +99,20 @@ long page, you get that section rather than the whole file; `--all` gives you th
 `docent find --json` prints the same results as JSON, and `docent path` prints the file a
 symbol lives in, so you can hand it to something else.
 
-### 3. Or in a window
+### 3. Index a repository
+
+```sh
+docent index ~/code/myproject --name "My Project" --keyword mine
+docent find mine:install
+```
+
+Every Markdown and HTML file becomes a page and every heading becomes an entry, so
+`docent show mine:"Running the tests"` prints that section and nothing else. Build folders,
+`.git`, `node_modules` and the like are skipped, symlinks are not followed, and the folder
+you point at is never modified. `--out PATH` writes the docset somewhere instead of
+installing it.
+
+### 4. Or in a window
 
 The app opens on the search field. Type, move through the results with the arrow keys
 without leaving the field, and the page appears beside them. The docsets on the left narrow
@@ -134,6 +153,7 @@ docent find --help       # the same thing
 | `docent show <query>` | print a symbol's documentation as text; `--all`, `--index N` |
 | `docent path <query>` | print the file (and anchor) a symbol lives in |
 | `docent add <path>` | install a `.docset` folder or a `.tgz` archive; `--replace` |
+| `docent index <folder>` | make a docset from a folder of Markdown and HTML; `--name`, `--keyword`, `--out`, `--replace` |
 
 ## What it touches
 
@@ -146,8 +166,9 @@ the only place it writes. It reads:
 - whatever `DOCENT_DOCSETS` names, if you set it (a colon-separated list of folders, which
   replaces all three).
 
-It never writes to a docset, never deletes one you did not ask it to replace, and never
-opens a network connection. Pages you read cannot either: JavaScript is off, remote images,
+`docent index` reads the folder you point it at — skipping `.git`, build folders and
+symlinks — and writes only the new docset. It never writes to a docset, never deletes one you
+did not ask it to replace, and never opens a network connection. Pages you read cannot either: JavaScript is off, remote images,
 stylesheets and fonts are blocked, and a link to the web opens in your own browser instead
 of loading inside Docent. A docset that points at a file outside itself is refused rather
 than followed.

@@ -35,7 +35,7 @@ public enum HTMLText {
 
     // MARK: - Title
 
-    static func extractTitle(_ html: String) -> String? {
+    public static func extractTitle(_ html: String) -> String? {
         guard let open = html.range(of: "<title", options: .caseInsensitive),
               let openEnd = html.range(of: ">", range: open.upperBound..<html.endIndex),
               let close = html.range(of: "</title>", options: .caseInsensitive, range: openEnd.upperBound..<html.endIndex)

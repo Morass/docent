@@ -30,7 +30,16 @@ public enum SyntaxHighlight {
         return """
         (function(){
         var KW = new Set(\(literal));
-        var blocks = document.querySelectorAll('pre, code');
+        // Code *blocks* only. Colouring inline `code` inside a sentence turns ordinary
+        // prose into confetti — a word like `private-patterns` is not a keyword.
+        var blocks = [];
+        var pres = document.querySelectorAll('pre');
+        for (var p = 0; p < pres.length; p++) {
+          var pre = pres[p];
+          var only = pre.children.length === 1 ? pre.children[0] : null;
+          if (only && only.tagName === 'CODE' && only.children.length === 0) { blocks.push(only); }
+          else if (pre.children.length === 0) { blocks.push(pre); }
+        }
         var touched = 0;
         function escapeHTML(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
         function highlight(text){
@@ -64,7 +73,6 @@ public enum SyntaxHighlight {
         }
         for (var b = 0; b < blocks.length; b++) {
           var block = blocks[b];
-          if (block.closest('pre') !== block && block.tagName === 'CODE' && block.closest('pre')) continue;
           if (block.children.length > 0) continue;            // already marked up: leave it alone
           if (block.dataset.docentHighlighted === '1') continue;
           var text = block.textContent;

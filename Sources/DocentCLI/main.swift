@@ -50,6 +50,7 @@ let helpSummaries: [(String, String)] = [
     ("show", "print a symbol's documentation as text"),
     ("path", "print the file a symbol lives in"),
     ("add", "put a docset into your library"),
+    ("index", "make a docset out of a folder of documentation"),
     ("help", "help for a command"),
 ]
 
@@ -160,6 +161,31 @@ let commandHelp: [String: String] = [
       docent add ~/Downloads/Go.docset
       docent add ~/Downloads/Python_3.tgz
     """,
+    "index": """
+    docent index — make a docset out of a folder of documentation.
+
+    USAGE
+      docent index <folder> [--name NAME] [--keyword WORD] [--out PATH] [--replace]
+
+    OPTIONS
+      --name NAME      what to call it (default: the folder's name)
+      --keyword WORD   the prefix to search it by, as in `mine:install`
+      --out PATH       write the .docset here instead of installing it
+      --replace        overwrite a docset of the same name already installed
+
+    Walks the folder for Markdown and HTML, renders each file as a page, and indexes every
+    heading. Point it at a repository and its own documentation becomes searchable next to
+    everything else — `docent find`, `docent show`, and the app.
+
+    Folders that are never documentation (.git, node_modules, build folders and the like)
+    are skipped, as are symlinks and files larger than 4 MB. Nothing in the folder is
+    modified; nothing leaves the machine.
+
+    EXAMPLES
+      docent index ~/code/myproject
+      docent index ~/code/myproject --name "My Project" --keyword mine
+      docent index ./docs --out /tmp/Docs.docset
+    """,
     "help": """
     docent help — help for a command.
 
@@ -184,6 +210,7 @@ struct Arguments {
         "show": ["docset", "index", "all"],
         "path": ["docset", "index"],
         "add": ["replace"],
+        "index": ["name", "keyword", "out", "replace"],
         "help": [],
     ]
 
@@ -516,6 +543,54 @@ func firstEscapingLink(in docset: URL) -> String? {
     return nil
 }
 
+func runIndex(_ arguments: Arguments) throws {
+    guard let folder = arguments.positional.first else {
+        throw CommandError("index needs a folder. Try: docent index ~/code/myproject")
+    }
+    let fm = FileManager.default
+    let source = URL(fileURLWithPath: expandTilde(folder)).standardizedFileURL
+    var isDirectory: ObjCBool = false
+    guard fm.fileExists(atPath: source.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+        throw CommandError("there is no folder at \(safe(source.path))")
+    }
+
+    let name = arguments.options["name"] ?? source.lastPathComponent
+    let keyword = arguments.options["keyword"] ?? Markdown.slug(name).nonEmpty
+    let indexer = Indexer(source: source, name: name, keyword: keyword)
+
+    let installing = arguments.options["out"] == nil
+    let destination: URL
+    if let out = arguments.options["out"] {
+        destination = URL(fileURLWithPath: expandTilde(out)).standardizedFileURL
+    } else {
+        let library = Home.docsetsDirectory()
+        try fm.createDirectory(at: library, withIntermediateDirectories: true)
+        destination = library.appendingPathComponent(Indexer.folderName(for: name))
+        if fm.fileExists(atPath: destination.path), !arguments.flags.contains("replace") {
+            throw CommandError("\(safe(name)) is already installed. Pass --replace to rebuild it.")
+        }
+    }
+
+    let report: Indexer.Report
+    do {
+        report = try indexer.build(into: destination)
+    } catch let error as Indexer.Failure {
+        throw CommandError(safe(error.description))
+    }
+
+    var line = "indexed \(bold(safe(name)))"
+    if let keyword { line += " (\(safe(keyword)):)" }
+    line += " — \(report.files) file\(report.files == 1 ? "" : "s"), \(report.entries) entries"
+    if report.skipped > 0 { line += dim(", \(report.skipped) skipped") }
+    print(out: line)
+    print(out: dim("  " + destination.path))
+    if installing {
+        print(out: dim("  try: docent find \(keyword.map { "\($0):" } ?? "")<something>"))
+    } else {
+        print(out: dim("  install it with: docent add \(destination.path)"))
+    }
+}
+
 func runPath(_ arguments: Arguments) throws {
     let limit = max(20, try arguments.integer("index", default: 1))
     let found = try matches(for: arguments, command: "path", limit: limit)
@@ -564,7 +639,7 @@ do {
         throw CommandError("no command called \"\(command)\". Commands: " + helpSummaries.map(\.0).joined(separator: ", "))
     }
 
-    let arguments = try Arguments(rest, optionsTakingValues: ["limit", "docset", "index"])
+    let arguments = try Arguments(rest, optionsTakingValues: ["limit", "docset", "index", "name", "keyword", "out"])
     if arguments.flags.contains("help") {
         print(out: commandHelp[command] ?? generalHelp())
         exit(0)
@@ -578,6 +653,7 @@ do {
     case "show": try runShow(arguments)
     case "path": try runPath(arguments)
     case "add": try runAdd(arguments)
+    case "index": try runIndex(arguments)
     default: throw CommandError("no command called \"\(command)\"")
     }
 } catch let error as CommandError {

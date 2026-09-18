@@ -92,3 +92,26 @@ final class ReadingThemeTests: XCTestCase {
         XCTAssertEqual(Set(SyntaxHighlight.keywords).count, SyntaxHighlight.keywords.count)
     }
 }
+
+extension ReadingThemeTests {
+    /// Inline `code` in a sentence must not be tokenised: a word like `private-patterns` is
+    /// not a keyword, and colouring it makes prose unreadable.
+    func testTheHighlighterOnlyTouchesCodeBlocks() throws {
+        let script = try XCTUnwrap(SyntaxHighlight.script)
+        XCTAssertFalse(script.contains("querySelectorAll('pre, code')"), "inline code would be highlighted")
+        XCTAssertTrue(script.contains("querySelectorAll('pre')"), script.prefix(200).description)
+    }
+
+    /// A generated page carries its own typography, because there is no docset stylesheet
+    /// behind it — otherwise it renders as full-width serif.
+    func testGeneratedPagesCarryTypographyButNoColours() {
+        let page = Markdown.render("# T\n\ntext\n", fallbackTitle: "x")
+        let html = Markdown.document(page, sourcePath: "x.md")
+        XCTAssertTrue(html.contains("font:"), html.prefix(400).description)
+        XCTAssertTrue(html.contains("max-width"), "generated pages need a reading measure")
+        for colour in ["color:", "background:"] {
+            XCTAssertFalse(Markdown.typography.contains(colour + " #"),
+                           "typography must not set colours — the reading theme owns those")
+        }
+    }
+}
