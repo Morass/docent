@@ -18,6 +18,7 @@ enum SelfTest {
         case "page": failures = MainActor.assumeIsolated { page() }
         case "network": failures = MainActor.assumeIsolated { network() }
         case "escape": failures = MainActor.assumeIsolated { escape() }
+        case "theme": failures = MainActor.assumeIsolated { theme() }
         default:
             FileHandle.standardError.write(Data("selftest: no mode called \"\(mode)\"\n".utf8))
             exit(2)
@@ -215,6 +216,82 @@ enum SelfTest {
             failures.append("a page displayed a file from outside its docset through a symlink")
         }
         return failures
+    }
+
+    /// Measures what the reader actually sees: the contrast the page ends up with once the
+    /// theme is injected, and whether code blocks were coloured. The palette unit tests check
+    /// the numbers Docent *intends*; this checks the ones a real page ends up with.
+    @MainActor
+    private static func theme() -> [String] {
+        var failures: [String] = []
+        let service = SearchService()
+        guard let match = (try? service.find("Print", limit: 1))?.first,
+              let location = try? service.location(of: match) else {
+            return ["no docsets to paint — set DOCENT_DOCSETS"]
+        }
+
+        for reading in [ReadingTheme.light, .dark] {
+            let configuration = WKWebViewConfiguration()
+            configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+            let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+            let probe = LoadProbe()
+            probe.root = match.docset.readAccessURL
+            webView.navigationDelegate = probe
+            webView.loadFileURL(location.url, allowingReadAccessTo: match.docset.readAccessURL)
+
+            let deadline = Date().addingTimeInterval(8)
+            while probe.finished == nil, Date() < deadline {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+            guard probe.finished != nil else {
+                failures.append("\(reading): the page never loaded")
+                continue
+            }
+
+            if let css = reading.injectionScript { evaluate(css, in: webView) }
+            if let highlighter = SyntaxHighlight.script { evaluate(highlighter, in: webView) }
+
+            let measure = """
+            (function(){
+              function lum(c){var m=c.match(/\\d+/g);if(!m)return null;
+                var v=m.slice(0,3).map(function(x){x=x/255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4);});
+                return 0.2126*v[0]+0.7152*v[1]+0.0722*v[2];}
+              var s=getComputedStyle(document.body);
+              var a=lum(s.color), b=lum(s.backgroundColor);
+              if(a===null||b===null) return '0|0';
+              var ratio=(Math.max(a,b)+0.05)/(Math.min(a,b)+0.05);
+              var tokens=document.querySelectorAll('.docent-kw,.docent-str,.docent-com,.docent-num,.docent-type').length;
+              return ratio.toFixed(2)+'|'+tokens;})()
+            """
+            let answer = evaluate(measure, in: webView) as? String ?? "0|0"
+            let parts = answer.split(separator: "|")
+            let ratio = Double(parts.first ?? "0") ?? 0
+            let tokens = Int(parts.last ?? "0") ?? 0
+
+            if ratio < 7 {
+                failures.append("\(reading): the page ends up at \(ratio):1 contrast — the trial called that unreadable")
+            }
+            if tokens == 0 {
+                failures.append("\(reading): no code was highlighted on a page that has a code block")
+            }
+        }
+        return failures
+    }
+
+    @discardableResult
+    @MainActor
+    private static func evaluate(_ script: String, in webView: WKWebView) -> Any? {
+        var result: Any?
+        var done = false
+        webView.evaluateJavaScript(script) { value, _ in
+            result = value
+            done = true
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while !done, Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        return result
     }
 
     /// A socket on localhost that counts anyone who connects.

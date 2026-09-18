@@ -40,6 +40,7 @@ enum RemoteContentBlock {
 struct PageView: NSViewRepresentable {
     let location: (url: URL, anchor: String?)?
     let documentsRoot: URL?
+    let theme: ReadingTheme
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -52,7 +53,12 @@ struct PageView: NSViewRepresentable {
         }
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
-        view.setValue(false, forKey: "drawsBackground")
+        // Opaque, and painted in the reading theme's own colour: a transparent web view puts
+        // a docset's dark-on-white CSS over a dark window, which is the "text is barely
+        // readable" the first trial found. The under-page colour also kills the white flash
+        // before the stylesheet lands.
+        view.underPageBackgroundColor = NSColor(hex: theme.palette.background) ?? .textBackgroundColor
+        context.coordinator.theme = theme
         return view
     }
 
@@ -67,6 +73,12 @@ struct PageView: NSViewRepresentable {
             view.configuration.userContentController.add(list)
             context.coordinator.blocked = true
         }
+        if context.coordinator.theme != theme {
+            context.coordinator.theme = theme
+            view.underPageBackgroundColor = NSColor(hex: theme.palette.background) ?? .textBackgroundColor
+            context.coordinator.applyTheme(to: view)     // live, without reloading the page
+        }
+
         guard let location, let documentsRoot else {
             view.loadHTMLString("", baseURL: nil)
             context.coordinator.loaded = nil
@@ -99,6 +111,18 @@ struct PageView: NSViewRepresentable {
         var root: URL?
         var anchor: String?
         var blocked = false
+        var theme: ReadingTheme = .light
+
+        /// Paint and colour the page: the theme's stylesheet first, then the highlighter for
+        /// code blocks the docset left plain.
+        func applyTheme(to webView: WKWebView) {
+            if let script = theme.injectionScript {
+                webView.evaluateJavaScript(script, completionHandler: nil)
+            }
+            if let highlighter = SyntaxHighlight.script {
+                webView.evaluateJavaScript(highlighter, completionHandler: nil)
+            }
+        }
 
         /// A docset points at one symbol on a page that may hold fifty. Without this the
         /// reader lands at the top of the page and has to go looking for what they picked.
@@ -108,6 +132,7 @@ struct PageView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            applyTheme(to: webView)
             scroll(webView, to: anchor)
         }
 
@@ -131,5 +156,19 @@ struct PageView: NSViewRepresentable {
             }
             decisionHandler(.cancel)
         }
+    }
+}
+
+
+extension NSColor {
+    /// `#rrggbb` — the reading theme speaks CSS, and the window needs the same colour.
+    convenience init?(hex: String) {
+        var text = hex.trimmingCharacters(in: .whitespaces)
+        if text.hasPrefix("#") { text.removeFirst() }
+        guard text.count == 6, let value = UInt32(text, radix: 16) else { return nil }
+        self.init(srgbRed: CGFloat((value >> 16) & 0xff) / 255,
+                  green: CGFloat((value >> 8) & 0xff) / 255,
+                  blue: CGFloat(value & 0xff) / 255,
+                  alpha: 1)
     }
 }

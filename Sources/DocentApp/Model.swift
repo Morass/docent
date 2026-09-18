@@ -11,6 +11,11 @@ final class Browser: ObservableObject {
     @Published private(set) var results: [Match] = []
     @Published var selection: Match.ID? { didSet { pushHistoryIfNeeded() } }
     @Published var docsetFilter: String? { didSet { search() } }
+    /// Which way pages are painted. Remembered between launches, because it is a reading
+    /// preference and not a per-session choice.
+    @Published var pageAppearance: PageAppearance = PageAppearance.remembered {
+        didSet { pageAppearance.remember() }
+    }
     @Published private(set) var status: String = ""
 
     private let service: SearchService
@@ -151,6 +156,37 @@ final class Browser: ObservableObject {
         selection = match.id
         restoringHistory = false
     }
+}
+
+/// Follow the app's appearance, or pin pages light or dark.
+enum PageAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "Match System"
+        case .light: return "Light Pages"
+        case .dark: return "Dark Pages"
+        }
+    }
+
+    func theme(systemIsDark: Bool) -> ReadingTheme {
+        switch self {
+        case .system: return .matching(isDark: systemIsDark)
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+
+    private static let key = "PageAppearance"
+
+    static var remembered: PageAppearance {
+        PageAppearance(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .system
+    }
+
+    func remember() { UserDefaults.standard.set(rawValue, forKey: PageAppearance.key) }
 }
 
 extension Match: Identifiable {

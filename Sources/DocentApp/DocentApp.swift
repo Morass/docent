@@ -31,6 +31,11 @@ struct DocentApp: App {
                     .keyboardShortcut("]", modifiers: .command)
                     .disabled(!browser.canGoForward)
                 Divider()
+                Picker("Page Appearance", selection: $browser.pageAppearance) {
+                    ForEach(PageAppearance.allCases) { appearance in
+                        Text(appearance.title).tag(appearance)
+                    }
+                }
                 Button("Reload Docsets") { browser.reloadDocsets() }
                     .keyboardShortcut("r", modifiers: .command)
             }
@@ -42,6 +47,7 @@ struct DocentApp: App {
 struct BrowserWindow: View {
     @ObservedObject var browser: Browser
     @FocusState private var searchFocused: Bool
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         // A plain split view rather than NavigationSplitView: its sidebar column is drawn
@@ -65,7 +71,7 @@ struct BrowserWindow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("DOCSETS")
                     .font(.caption2).fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.primary.opacity(0.7))
                     .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 4)
 
                 docsetRow(title: "All docsets", keyword: nil, tag: nil)
@@ -89,7 +95,7 @@ struct BrowserWindow: View {
                 Text(title).lineLimit(1)
                 Spacer(minLength: 4)
                 if let keyword {
-                    Text(keyword).font(.caption).foregroundStyle(.secondary)
+                    Text(keyword).font(.caption).foregroundStyle(Color.primary.opacity(0.72))
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
@@ -107,7 +113,7 @@ struct BrowserWindow: View {
     private var searchColumn: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                Image(systemName: "magnifyingglass").foregroundStyle(Color.primary.opacity(0.7))
                 TextField("Search the docsets", text: $browser.query)
                     .textFieldStyle(.plain)
                     .focused($searchFocused)
@@ -147,7 +153,9 @@ struct BrowserWindow: View {
                             Text(match.docset.name)
                         }
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        // `.secondary` is barely there against a dark list; the first trial
+                        // called the window low-contrast and this line was part of it.
+                        .foregroundStyle(Color.primary.opacity(0.78))
                     }
                     .tag(match.id)
                 }
@@ -159,7 +167,9 @@ struct BrowserWindow: View {
     private var page: some View {
         Group {
             if let match = browser.selectedMatch, let location = browser.location(of: match) {
-                PageView(location: location, documentsRoot: match.docset.readAccessURL)
+                PageView(location: location,
+                         documentsRoot: match.docset.readAccessURL,
+                         theme: browser.pageAppearance.theme(systemIsDark: colorScheme == .dark))
                     .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
                     .navigationTitle("\(match.entry.name) — \(match.docset.name)")
             } else {

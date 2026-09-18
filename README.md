@@ -11,6 +11,8 @@ them, in an app and in a command you can pipe.
 
 - **Search** every docset at once, exactly or loosely: `NSPast` finds `NSPasteboard`.
 - **Read** a symbol's page in the window, or print it as text with `docent show`.
+- **Read comfortably.** Pages are painted to match the app — light or dark, your choice —
+  and code blocks are syntax-highlighted even when the docset ships them plain.
 - **Keep it offline.** Docent never opens a network connection, and pages you read cannot
   either.
 
@@ -97,6 +99,12 @@ The app opens on the search field. Type, move through the results with the arrow
 without leaving the field, and the page appears beside them. The docsets on the left narrow
 the search to one at a time.
 
+Pages are repainted for reading rather than shown as the docset's own stylesheet left them:
+white with near-black text, or a dark ground with light text, whichever matches the app —
+and **View ▸ Page Appearance** pins it to light or dark if you would rather choose. Code
+blocks a docset ships without colour are highlighted; blocks it already coloured are left
+exactly as they are.
+
 ## Keyboard
 
 | Key | What it does |
@@ -105,6 +113,9 @@ the search to one at a time.
 | ↑ / ↓ | move through the results while you keep typing |
 | ⌘[ / ⌘] | back and forward through what you have read |
 | ⌘R | look for docsets again after adding one |
+
+Page colours live in **View ▸ Page Appearance**: match the system, or pin pages light or
+dark. Docent remembers the choice.
 
 ## Getting help
 
@@ -149,6 +160,9 @@ than followed.
 - `docent show` renders a page as plain text. Tables come out as rows, diagrams and images
   do not come out at all — read those in the window.
 - Search is over symbol names, not the text of the pages.
+- Syntax highlighting is a general-purpose guess, not a parser per language: it colours
+  comments, strings, numbers, common keywords and capitalised names. A docset that already
+  highlights its own code keeps its own colours.
 
 ## License
 
