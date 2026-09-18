@@ -14,9 +14,14 @@ struct DocentApp: App {
         WindowGroup("Docent") {
             BrowserWindow(browser: browser)
                 .frame(minWidth: 720, minHeight: 440)
+                .onAppear { Screenshot.scheduleIfRequested(browser: browser) }
         }
         .defaultSize(width: 1080, height: 720)
         .commands {
+            CommandGroup(after: .textEditing) {
+                Button("Find") { NotificationCenter.default.post(name: .docentFocusSearch, object: nil) }
+                    .keyboardShortcut("f", modifiers: .command)
+            }
             CommandGroup(after: .toolbar) {
                 Button("Back") { browser.goBack() }
                     .keyboardShortcut("[", modifiers: .command)
@@ -41,44 +46,93 @@ struct BrowserWindow: View {
         NavigationSplitView {
             sidebar
         } content: {
-            resultsList
+            searchColumn
         } detail: {
             page
         }
         .onAppear { searchFocused = true }
-        .searchable(text: $browser.query, placement: .toolbar, prompt: "Search the docsets")
+        .onReceive(NotificationCenter.default.publisher(for: .docentFocusSearch)) { _ in
+            searchFocused = true
+        }
     }
 
     private var sidebar: some View {
-        List(selection: Binding(
-            get: { browser.docsetFilter },
-            set: { browser.docsetFilter = $0 }
-        )) {
-            Section("Docsets") {
-                Text("All docsets").tag(String?.none)
+        // Plain rows rather than a vibrant sidebar List: vibrancy cannot be drawn into a
+        // bitmap (it comes out as a white slab in the README picture) and buys nothing here.
+        ScrollView {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("DOCSETS")
+                    .font(.caption2).fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 4)
+
+                docsetRow(title: "All docsets", keyword: nil, tag: nil)
                 ForEach(browser.docsets, id: \.identifier) { docset in
-                    HStack {
-                        Text(docset.name)
-                        Spacer()
-                        if let keyword = docset.keyword {
-                            Text(keyword).foregroundStyle(.secondary).font(.caption)
-                        }
-                    }
-                    .tag(String?.some(docset.keyword ?? docset.name))
+                    docsetRow(title: docset.name, keyword: docset.keyword, tag: docset.keyword ?? docset.name)
                 }
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .navigationSplitViewColumnWidth(min: 170, ideal: 210)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .navigationSplitViewColumnWidth(min: 180, ideal: 220)
     }
 
-    private var resultsList: some View {
+    private func docsetRow(title: String, keyword: String?, tag: String?) -> some View {
+        let selected = browser.docsetFilter == tag
+        return Button {
+            browser.docsetFilter = tag
+        } label: {
+            HStack(spacing: 6) {
+                Text(title).lineLimit(1)
+                Spacer(minLength: 4)
+                if let keyword {
+                    Text(keyword).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? Color.accentColor.opacity(0.22) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+    }
+
+    /// The search field lives above the results rather than in the toolbar: it is the first
+    /// thing the window is for, it keeps the keyboard on one column, and ↑/↓ can move the
+    /// selection while the cursor stays in the field.
+    private var searchColumn: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search the docsets", text: $browser.query)
+                    .textFieldStyle(.plain)
+                    .focused($searchFocused)
+                    .onKeyPress(.upArrow) { browser.moveSelection(by: -1); return .handled }
+                    .onKeyPress(.downArrow) { browser.moveSelection(by: 1); return .handled }
+                if !browser.query.isEmpty {
+                    Button { browser.query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(8)
+            Divider()
+            results
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+        .navigationSplitViewColumnWidth(min: 240, ideal: 320)
+    }
+
+    private var results: some View {
         Group {
             if browser.results.isEmpty {
                 ContentUnavailableView(
                     browser.query.isEmpty ? "Search your docsets" : "No matches",
                     systemImage: "magnifyingglass",
                     description: Text(browser.status.isEmpty
-                                      ? "Type a symbol name. `go:Println` searches one docset."
+                                      ? "Type a symbol name. “go:Println” searches one docset."
                                       : browser.status)
                 )
             } else {
@@ -95,15 +149,15 @@ struct BrowserWindow: View {
                     }
                     .tag(match.id)
                 }
+                .listStyle(.inset)
             }
         }
-        .navigationSplitViewColumnWidth(min: 220, ideal: 300)
     }
 
     private var page: some View {
         Group {
             if let match = browser.selectedMatch, let location = browser.location(of: match) {
-                PageView(location: location, documentsRoot: match.docset.documentsURL)
+                PageView(location: location, documentsRoot: match.docset.readAccessURL)
                     .navigationTitle(match.entry.name)
                     .navigationSubtitle(match.docset.name)
             } else {
@@ -115,4 +169,8 @@ struct BrowserWindow: View {
             }
         }
     }
+}
+
+extension Notification.Name {
+    static let docentFocusSearch = Notification.Name("docent.focusSearch")
 }

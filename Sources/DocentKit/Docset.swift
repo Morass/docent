@@ -15,7 +15,10 @@ public struct Docset: Hashable, Sendable, Comparable {
     public let indexPage: String
 
     public var indexURL: URL { url.appendingPathComponent("Contents/Resources/docSet.dsidx") }
-    public var documentsURL: URL { url.appendingPathComponent("Contents/Resources/Documents") }
+    /// Marked as a directory on purpose: `WKWebView.loadFileURL(_:allowingReadAccessTo:)`
+    /// treats a URL without the directory flag as a single *file*, and then refuses every
+    /// page in the docset with "outside the sandbox".
+    public var documentsURL: URL { url.appendingPathComponent("Contents/Resources/Documents", isDirectory: true) }
     public var iconURL: URL? {
         let icon = url.appendingPathComponent("icon.png")
         return FileManager.default.fileExists(atPath: icon.path) ? icon : nil
@@ -55,16 +58,27 @@ public struct Docset: Hashable, Sendable, Comparable {
         return dict
     }
 
+    /// The folder a web view is given read access to, with every symlink resolved.
+    /// WebKit resolves the page's path before comparing, so handing it `/tmp/x` while the
+    /// page resolves to `/private/tmp/x` makes it refuse the page as "outside the sandbox".
+    public var readAccessURL: URL {
+        URL(fileURLWithPath: documentsURL.resolvingSymlinksInPath().path, isDirectory: true)
+    }
+
     /// Resolves a docset-relative path (which may carry an `#anchor`) to a file on disk.
     /// Paths that try to climb out of the docset return nil: an index is data, and a
     /// malicious or broken one must not be able to name `../../../etc/passwd`.
+    ///
+    /// Containment is checked after resolving symlinks on both sides, so a link *inside*
+    /// the docset pointing somewhere else cannot be used to escape either.
     public func fileURL(forPath path: String) -> URL? {
         let path = Docset.normalizedPath(path)
         let withoutAnchor = String(path.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0])
         let cleaned = withoutAnchor.removingPercentEncoding ?? withoutAnchor
         guard !cleaned.isEmpty else { return nil }
-        let resolved = URL(fileURLWithPath: cleaned, relativeTo: documentsURL).standardizedFileURL
-        let root = documentsURL.standardizedFileURL.path
+        let candidate = URL(fileURLWithPath: cleaned, relativeTo: documentsURL).standardizedFileURL
+        let root = readAccessURL.path
+        let resolved = candidate.resolvingSymlinksInPath()
         guard resolved.path == root || resolved.path.hasPrefix(root + "/") else { return nil }
         return resolved
     }

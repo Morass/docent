@@ -122,3 +122,29 @@ extension DocsetTests {
                        "//dash_ref_example%2DPrintln/Sample/Println/0")
     }
 }
+
+extension DocsetTests {
+    /// WebKit reads the directory flag on the URL it is given read access to, not the disk.
+    func testDocumentsURLIsMarkedAsADirectory() throws {
+        let docset = try Fixture.docset(in: root)
+        XCTAssertTrue(docset.documentsURL.hasDirectoryPath,
+                      "a read-access URL without the directory flag makes WebKit refuse every page")
+    }
+}
+
+extension DocsetTests {
+    func testASymlinkInsideTheDocsetCannotPointOutOfIt() throws {
+        let docset = try Fixture.docset(in: root)
+        let escape = docset.documentsURL.appendingPathComponent("escape.html")
+        try FileManager.default.createSymbolicLink(at: escape, withDestinationURL: URL(fileURLWithPath: "/etc/hosts"))
+        XCTAssertNil(docset.fileURL(forPath: "escape.html"),
+                     "a link inside the docset must not be a way out of it")
+    }
+
+    func testResolvedPathsAreReturnedSoWebKitAgreesWithUs() throws {
+        let docset = try Fixture.docset(in: root)
+        let file = try XCTUnwrap(docset.fileURL(forPath: "widget.html"))
+        XCTAssertEqual(file.path, file.resolvingSymlinksInPath().path)
+        XCTAssertTrue(file.path.hasPrefix(docset.readAccessURL.path + "/"))
+    }
+}

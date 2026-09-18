@@ -2,6 +2,15 @@ import SwiftUI
 import WebKit
 import DocentKit
 
+extension URL {
+    /// The same page without its `#symbol` part.
+    var deletingFragment: URL {
+        var components = URLComponents(url: self, resolvingAgainstBaseURL: false)
+        components?.fragment = nil
+        return components?.url ?? self
+    }
+}
+
 /// The page itself. A docset is someone else's HTML from the internet, so this web view is
 /// deliberately a reader and not a browser: no JavaScript, and nothing but files inside the
 /// docset may load. A link that points outside opens in the user's own browser, where they
@@ -34,15 +43,37 @@ struct PageView: NSViewRepresentable {
             components.fragment = anchor
             target = components.url ?? location.url
         }
+        context.coordinator.root = documentsRoot
+        // Same page, different symbol: scroll rather than reload, so moving down a list of
+        // methods on one class does not flash the page each time.
+        if let loaded = context.coordinator.loaded,
+           loaded.deletingFragment == target.deletingFragment,
+           loaded != target {
+            context.coordinator.loaded = target
+            context.coordinator.scroll(view, to: location.anchor)
+            return
+        }
         guard context.coordinator.loaded != target else { return }
         context.coordinator.loaded = target
-        context.coordinator.root = documentsRoot
+        context.coordinator.anchor = location.anchor
         view.loadFileURL(target, allowingReadAccessTo: documentsRoot)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loaded: URL?
         var root: URL?
+        var anchor: String?
+
+        /// A docset points at one symbol on a page that may hold fifty. Without this the
+        /// reader lands at the top of the page and has to go looking for what they picked.
+        func scroll(_ webView: WKWebView, to anchor: String?) {
+            guard let anchor, let script = AnchorScript.scroll(to: anchor) else { return }
+            webView.evaluateJavaScript(script, completionHandler: nil)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            scroll(webView, to: anchor)
+        }
 
         func webView(
             _ webView: WKWebView,

@@ -1,4 +1,5 @@
 import Foundation
+import WebKit
 import DocentKit
 
 /// End-to-end checks that need the real app rather than the library: the model, the
@@ -13,6 +14,7 @@ enum SelfTest {
         let failures: [String]
         switch mode {
         case "browse": failures = browse()
+        case "page": failures = MainActor.assumeIsolated { page() }
         default:
             FileHandle.standardError.write(Data("selftest: no mode called \"\(mode)\"\n".utf8))
             exit(2)
@@ -23,6 +25,114 @@ enum SelfTest {
         }
         for failure in failures { FileHandle.standardError.write(Data("selftest \(mode): \(failure)\n".utf8)) }
         exit(1)
+    }
+
+    /// Proves the page half: the real web view, the real configuration and the real
+    /// navigation delegate, loading a real file out of a docset. The window can look
+    /// perfect while this is broken, and nothing else in the suite would notice.
+    @MainActor
+    private static func page() -> [String] {
+        var failures: [String] = []
+        let service = SearchService()
+        // A symbol that is *not* the first thing on its page: landing at the top would look
+        // like success otherwise.
+        guard let match = (try? service.find("PrintTable", limit: 1))?.first else {
+            return ["no docsets to load a page from — set DOCENT_DOCSETS"]
+        }
+        guard let location = try? service.location(of: match) else {
+            return ["the best match for PrintTable resolves to no file"]
+        }
+
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 900, height: 600), configuration: configuration)
+        let probe = LoadProbe()
+        webView.navigationDelegate = probe
+
+        var target = location.url
+        if let anchor = location.anchor, var components = URLComponents(url: location.url, resolvingAgainstBaseURL: false) {
+            components.fragment = anchor
+            target = components.url ?? location.url
+        }
+        probe.root = match.docset.readAccessURL
+        webView.loadFileURL(target, allowingReadAccessTo: match.docset.readAccessURL)
+
+        let deadline = Date().addingTimeInterval(10)
+        while probe.finished == nil, Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+
+        // Does the page land on the symbol, or at the top of a long page? And can the host
+        // still run its own JavaScript while page scripts are off?
+        var offset: Double? = nil
+        var jsError: String? = nil
+        if probe.finished != nil {
+            let anchorScript = (AnchorScript.scroll(to: location.anchor ?? "") ?? "false") + ";window.pageYOffset"
+            var done = false
+            webView.evaluateJavaScript(anchorScript) { value, error in
+                offset = (value as? NSNumber)?.doubleValue
+                jsError = error.map { "\($0)" }
+                done = true
+            }
+            let jsDeadline = Date().addingTimeInterval(5)
+            while !done, Date() < jsDeadline {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+        }
+        if let jsError { failures.append("the page could not be scrolled to its symbol: \(jsError)") }
+        if location.anchor != nil, (offset ?? 0) <= 0 {
+            failures.append("the page did not scroll to the symbol — a result halfway down a long page would land at the top")
+        }
+
+        switch probe.finished {
+        case .some(.success):
+            break
+        case .some(.failure(let message)):
+            failures.append("the page failed to load: \(message)")
+        case nil:
+            failures.append("the page never finished loading in ten seconds")
+        }
+        if probe.cancelled > 0 {
+            failures.append("the navigation delegate cancelled the page's own file URL \(probe.cancelled) time(s)")
+        }
+        return failures
+    }
+
+    /// The same policy the app uses, with a record of what it did.
+    @MainActor
+    private final class LoadProbe: NSObject, WKNavigationDelegate {
+        enum Outcome { case success, failure(String) }
+        var finished: Outcome?
+        var cancelled = 0
+        var root: URL?
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard let url = navigationAction.request.url, url.isFileURL, let root else {
+                cancelled += 1
+                return decisionHandler(.cancel)
+            }
+            let allowed = root.standardizedFileURL.path
+            let path = url.standardizedFileURL.path
+            if path == allowed || path.hasPrefix(allowed + "/") {
+                decisionHandler(.allow)
+            } else {
+                cancelled += 1
+                decisionHandler(.cancel)
+            }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            finished = .success
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            finished = .failure(error.localizedDescription)
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            finished = .failure("provisional: \(error.localizedDescription)")
+        }
     }
 
     private static func browse() -> [String] {
