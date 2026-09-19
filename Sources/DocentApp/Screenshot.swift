@@ -26,6 +26,7 @@ enum Screenshot {
         // Two hops through the run loop: one to let SwiftUI build the window, one to let
         // the web view finish drawing the page it was given.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            applyAppearance()
             if let docset {
                 browser.docsetFilter = docset
                 browser.query = ProcessInfo.processInfo.environment["DOCENT_SCREENSHOT_QUERY"] ?? ""
@@ -66,6 +67,13 @@ enum Screenshot {
                 }
             }
         }
+    }
+
+    /// Photograph the window in a chosen appearance, so the light one can be looked at on
+    /// a machine that is set to dark.
+    static func applyAppearance() {
+        guard let wanted = ProcessInfo.processInfo.environment["DOCENT_SCREENSHOT_APPEARANCE"] else { return }
+        NSApp.appearance = NSAppearance(named: wanted == "light" ? .aqua : .darkAqua)
     }
 
     private static func resizeWindow() {
