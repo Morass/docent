@@ -51,6 +51,7 @@ let helpSummaries: [(String, String)] = [
     ("path", "print the file a symbol lives in"),
     ("add", "put a docset into your library"),
     ("index", "make a docset out of a folder of documentation"),
+    ("browse", "index a folder if needed and open it in the Docent window"),
     ("help", "help for a command"),
 ]
 
@@ -72,6 +73,7 @@ func generalHelp() -> String {
         "  docent list",
         "  docent find NSPasteboard",
         "  docent show go:Println",
+        "  docent browse ~/code/myproject",
         "",
         "Docsets are read from ~/Library/Application Support/Docent/DocSets, and from Dash's",
         "and Zeal's folders if you have them. DOCENT_DOCSETS overrides that with a",
@@ -191,6 +193,31 @@ let commandHelp: [String: String] = [
       docent index ~/code/myproject --name "My Project" --keyword mine
       docent index ./docs --out /tmp/Docs.docset
     """,
+    "browse": """
+    docent browse — index a folder if needed and read it in the Docent window.
+
+    USAGE
+      docent browse [folder] [--name NAME] [--keyword WORD] [--replace]
+
+    OPTIONS
+      --name NAME      what to call it (default: the folder's name)
+      --keyword WORD   the prefix to search it by, as in `mine:install`
+      --replace        rebuild it from the folder as it is now
+
+    The one command for "let me read this project's documentation": it makes a docset out
+    of the folder if there is not one already, opens Docent, and shows that docset with
+    everything in it listed. Run it again later with --replace to pick up new files.
+
+    With no folder it just opens Docent on the library you already have.
+
+    If DOCENT_DOCSETS is set it is passed to the app, which only takes effect when Docent
+    is not already running — quit it first if you are switching libraries.
+
+    EXAMPLES
+      docent browse ~/code/myproject
+      docent browse ~/code/myproject --replace
+      docent browse
+    """,
     "help": """
     docent help — help for a command.
 
@@ -216,6 +243,7 @@ struct Arguments {
         "path": ["docset", "index", "text"],
         "add": ["replace"],
         "index": ["name", "keyword", "out", "replace"],
+        "browse": ["name", "keyword", "replace"],
         "help": [],
     ]
 
@@ -646,9 +674,105 @@ func runIndex(_ arguments: Arguments) throws {
     print(out: dim("  " + destination.path))
     if installing {
         print(out: dim("  try: docent find \(keyword.map { "\($0):" } ?? "")<something>"))
+        print(out: dim("  or read it in the window: docent browse \(safe(source.path))"))
     } else {
         print(out: dim("  install it with: docent add \(destination.path)"))
     }
+}
+
+/// Where Docent.app is: beside this command (a checkout builds both into `build/`), then
+/// the two places an app is installed. Launch Services is asked only if none of them exist.
+func docentAppURL() -> URL? {
+    let fm = FileManager.default
+    let beside = URL(fileURLWithPath: CommandLine.arguments[0])
+        .resolvingSymlinksInPath()
+        .deletingLastPathComponent()
+    let candidates = [
+        beside.appendingPathComponent("Docent.app"),
+        URL(fileURLWithPath: "/Applications/Docent.app"),
+        Home.directory().appendingPathComponent("Applications/Docent.app"),
+    ]
+    return candidates.first { fm.fileExists(atPath: $0.path) }
+}
+
+func openDocentApp() throws {
+    let app = docentAppURL()
+    // The tests and the smoke script drive everything up to the launch, and stop there:
+    // a window opening on the machine running them is not a result.
+    if ProcessInfo.processInfo.environment["DOCENT_NO_LAUNCH"] != nil {
+        print(out: dim("  (not opening the app: DOCENT_NO_LAUNCH is set)"))
+        return
+    }
+    // A library override only reaches an app that is being launched now; `open` cannot
+    // change the environment of one that is already running, and says so in its own manual.
+    var options: [String] = []
+    if let override = ProcessInfo.processInfo.environment["DOCENT_DOCSETS"]?.trimmed, !override.isEmpty {
+        options = ["--env", "DOCENT_DOCSETS=" + override]
+    }
+    if let app {
+        try run("/usr/bin/open", options + [app.path], failure: "could not open \(app.path)")
+        return
+    }
+    do {
+        try run("/usr/bin/open", options + ["-b", "io.github.morass.docent"], failure: "not installed")
+    } catch {
+        throw CommandError("""
+            Docent.app is not installed, so there is no window to open. Build and install it \
+            with ./Scripts/install.sh from a checkout — the docset is already in your library, \
+            and `docent find` reads it in the terminal meanwhile.
+            """)
+    }
+}
+
+/// `docent browse` — the one command for "let me read this project's documentation".
+func runBrowse(_ arguments: Arguments) throws {
+    let library = DocsetLibrary.standard()
+    var hint: String?
+
+    if let folder = arguments.positional.first {
+        let fm = FileManager.default
+        let source = URL(fileURLWithPath: expandTilde(folder)).standardizedFileURL
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: source.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw CommandError("there is no folder at \(safe(source.path))")
+        }
+
+        let name = arguments.options["name"] ?? source.lastPathComponent
+        let keyword = arguments.options["keyword"] ?? Markdown.slug(name).nonEmpty
+        hint = keyword ?? name
+
+        try fm.createDirectory(at: library.installDirectory, withIntermediateDirectories: true)
+        let destination = library.installDirectory.appendingPathComponent(Indexer.folderName(for: name))
+        let already = fm.fileExists(atPath: destination.path)
+
+        if already, !arguments.flags.contains("replace") {
+            // Not an error: the usual second run of this command is someone coming back to
+            // read the same project, and re-indexing it every time would be a tax.
+            print(out: "\(bold(safe(name))) is already indexed — opening it.")
+            print(out: dim("  rebuild it from the folder as it is now: docent browse \(folder) --replace"))
+        } else {
+            let indexer = Indexer(source: source, name: name, keyword: keyword)
+            let report: Indexer.Report
+            do {
+                report = try indexer.build(into: destination)
+            } catch let error as Indexer.Failure {
+                throw CommandError(safe(error.description))
+            }
+            var line = already ? "rebuilt " : "indexed "
+            line += bold(safe(name))
+            if let keyword { line += " (\(safe(keyword)):)" }
+            line += " — \(report.files) file\(report.files == 1 ? "" : "s"), \(report.entries) entries"
+            if report.skipped > 0 { line += dim(", \(report.skipped) skipped") }
+            print(out: line)
+            if report.entries == 0 {
+                print(out: dim("  no Markdown or HTML in that folder — the window will show it empty"))
+            }
+        }
+    }
+
+    try OpenRequest(docset: hint).write(to: OpenRequest.url(library: library))
+    print(out: dim(hint == nil ? "  opening Docent" : "  opening it in Docent"))
+    try openDocentApp()
 }
 
 func runPath(_ arguments: Arguments) throws {
@@ -715,6 +839,7 @@ do {
     case "path": try runPath(arguments)
     case "add": try runAdd(arguments)
     case "index": try runIndex(arguments)
+    case "browse": try runBrowse(arguments)
     default: throw CommandError("no command called \"\(command)\"")
     }
 } catch let error as CommandError {

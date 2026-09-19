@@ -84,7 +84,13 @@ struct BrowserWindow: View {
             searchColumn
             page
         }
-        .onAppear { searchFocused = true }
+        .onAppear {
+            searchFocused = true
+            browser.applyOpenRequest()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            browser.applyOpenRequest()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .docentFocusSearch)) { _ in
             searchFocused = true
         }

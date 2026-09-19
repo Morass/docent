@@ -44,7 +44,7 @@ final class CLITests: XCTestCase {
     }
 
     @discardableResult
-    func docent(_ arguments: [String], withDocsets: Bool = true) throws -> Run {
+    func docent(_ arguments: [String], withDocsets: Bool = true, extra: [String: String] = [:]) throws -> Run {
         let process = Process()
         process.executableURL = Self.binary
         process.arguments = arguments
@@ -52,6 +52,7 @@ final class CLITests: XCTestCase {
         // the case set up.
         var environment = ["HOME": home.path, "PATH": "/usr/bin:/bin"]
         if withDocsets { environment["DOCENT_DOCSETS"] = docsets.path }
+        for (key, value) in extra { environment[key] = value }
         process.environment = environment
 
         let outPipe = Pipe(), errPipe = Pipe()
@@ -591,5 +592,63 @@ extension CLITests {
         XCTAssertEqual(run.status, 0, run.err)
         XCTAssertTrue(run.out.contains("Install"), run.out)
         XCTAssertTrue(run.out.contains("Deploying"), run.out)
+    }
+}
+
+// MARK: - browse: one command from a folder to the window
+
+extension CLITests {
+    /// The whole point of `browse`: no docset yet, one command, and afterwards the app has
+    /// both something to show and an instruction saying what to show.
+    func testBrowseIndexesTheFolderAndLeavesARequestForTheApp() throws {
+        let repo = try makeRepo()
+        let run = try docent(["browse", repo.path, "--name", "My Repo", "--keyword", "mine"],
+                             withDocsets: false, extra: ["DOCENT_NO_LAUNCH": "1"])
+        XCTAssertEqual(run.status, 0, run.err)
+        XCTAssertTrue(run.out.contains("indexed My Repo"), run.out)
+
+        let installed = home.appendingPathComponent("Library/Application Support/Docent/DocSets/My-Repo.docset")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: installed.path), run.out)
+
+        let request = OpenRequest.consume(at: home.appendingPathComponent(
+            "Library/Application Support/Docent/DocSets/.open-request.json"))
+        XCTAssertEqual(request?.docset, "mine")
+    }
+
+    /// Coming back to a project a second time must not re-index it, and must not fail
+    /// either: `index` says "pass --replace", `browse` just opens it.
+    func testBrowseAgainOpensWhatIsAlreadyThere() throws {
+        let repo = try makeRepo()
+        XCTAssertEqual(try docent(["browse", repo.path, "--name", "Repo"],
+                                  withDocsets: false, extra: ["DOCENT_NO_LAUNCH": "1"]).status, 0)
+        let second = try docent(["browse", repo.path, "--name", "Repo"],
+                                withDocsets: false, extra: ["DOCENT_NO_LAUNCH": "1"])
+        XCTAssertEqual(second.status, 0, second.err)
+        XCTAssertTrue(second.out.contains("already indexed"), second.out)
+        XCTAssertTrue(second.out.contains("--replace"), "it should say how to rebuild: \(second.out)")
+
+        let third = try docent(["browse", repo.path, "--name", "Repo", "--replace"],
+                               withDocsets: false, extra: ["DOCENT_NO_LAUNCH": "1"])
+        XCTAssertEqual(third.status, 0, third.err)
+        XCTAssertTrue(third.out.contains("rebuilt Repo"), third.out)
+    }
+
+    /// The request is written where the library is actually reading, not into the real
+    /// home: `DOCENT_DOCSETS` moves both halves together or neither.
+    func testBrowseWritesTheRequestWhereTheLibraryLooks() throws {
+        let run = try docent(["browse"], extra: ["DOCENT_NO_LAUNCH": "1"])
+        XCTAssertEqual(run.status, 0, run.err)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: docsets.appendingPathComponent(".open-request.json").path), run.out)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: home.appendingPathComponent("Library/Application Support/Docent/DocSets/.open-request.json").path),
+            "it wrote to the default library while DOCENT_DOCSETS pointed elsewhere")
+    }
+
+    func testBrowseRefusesAFolderThatIsNotThere() throws {
+        let run = try docent(["browse", root.appendingPathComponent("nope").path],
+                             withDocsets: false, extra: ["DOCENT_NO_LAUNCH": "1"])
+        XCTAssertEqual(run.status, 1)
+        XCTAssertTrue(run.err.contains("no folder at"), run.err)
     }
 }

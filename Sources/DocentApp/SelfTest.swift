@@ -20,6 +20,7 @@ enum SelfTest {
         case "escape": failures = MainActor.assumeIsolated { escape() }
         case "theme": failures = MainActor.assumeIsolated { theme() }
         case "indexui": failures = MainActor.assumeIsolated { indexFromTheWindow() }
+        case "openrequest": failures = MainActor.assumeIsolated { openRequestFromTheTerminal() }
         default:
             FileHandle.standardError.write(Data("selftest: no mode called \"\(mode)\"\n".utf8))
             exit(2)
@@ -222,6 +223,44 @@ enum SelfTest {
     /// The menu item's whole job, minus the file panel: index a folder, install it, reload
     /// the library and select it. The panel is three lines in `DocentApp`; this is the part
     /// that can be wrong.
+    /// `docent browse` asks for a docset by writing a file; this is the other half of that
+    /// handoff, in the real model. The command's own tests prove the file gets written —
+    /// only the window can prove it gets acted on.
+    @MainActor
+    private static func openRequestFromTheTerminal() -> [String] {
+        var failures: [String] = []
+        func check(_ condition: Bool, _ message: String) { if !condition { failures.append(message) } }
+
+        let browser = Browser()
+        guard let docset = browser.docsets.first else {
+            return ["no docsets to ask for — set DOCENT_DOCSETS"]
+        }
+        let wanted = docset.keyword ?? docset.name
+        let url = OpenRequest.url(library: DocsetLibrary.standard())
+
+        try? OpenRequest(docset: wanted).write(to: url)
+        check(browser.applyOpenRequest(), "the window ignored a fresh request")
+        check(browser.docsetFilter == wanted, "it did not select \(wanted): \(browser.docsetFilter ?? "nothing")")
+        browser.searchAndWait()
+        check(!browser.results.isEmpty, "selecting the docset showed none of its entries")
+        check(!FileManager.default.fileExists(atPath: url.path), "the request was not consumed")
+        check(!browser.applyOpenRequest(), "the same request was acted on twice")
+
+        // Stale, and for something that is not installed: neither may steer the window.
+        browser.docsetFilter = nil
+        try? OpenRequest(docset: wanted, written: Date().addingTimeInterval(-3600)).write(to: url)
+        check(!browser.applyOpenRequest(), "an hour-old request still moved the window")
+        check(browser.docsetFilter == nil, "an hour-old request still selected a docset")
+
+        try? OpenRequest(docset: "nothing-is-called-this").write(to: url)
+        check(browser.applyOpenRequest(), "a request for a missing docset was dropped silently")
+        check(browser.docsetFilter == nil, "it filtered by a docset that is not installed")
+        check(browser.status.contains("not in the library"), "it did not say why: \(browser.status)")
+
+        try? FileManager.default.removeItem(at: url)
+        return failures
+    }
+
     @MainActor
     private static func indexFromTheWindow() -> [String] {
         var failures: [String] = []

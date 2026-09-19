@@ -53,13 +53,17 @@ DOCENT_APP_DIR=~/Applications DOCENT_BIN_DIR=~/.local/bin make install
 ## Quick start
 
 ```sh
+docent browse ~/code/myproject    # index a project and read it in the window
 docent add ~/Downloads/Go.tgz     # put a docset in your library
-docent index ~/code/myproject     # make one out of a repository's own docs
 docent list                       # what is installed
 docent find Println               # search every docset
 docent show go:Println            # print the documentation as text
-open -a Docent                    # the same library, in a window
+open -a Docent                    # the whole library, in a window
 ```
+
+`docent browse` is the short way in: it makes a docset out of the folder if there is not
+one yet, opens Docent, and shows that project with everything in it listed. Run it again
+later with `--replace` to pick up new files.
 
 ## Getting docsets
 
@@ -69,9 +73,10 @@ Docent reads docsets; it does not host or sell them. Three ways to get one:
   folders as they are — nothing to copy.
 - **Download one** from the docset feeds those apps use, then add the archive:
   `docent add ~/Downloads/Python_3.tgz`.
-- **Index a folder you have**: `docent index ~/code/myproject` walks it for Markdown and
-  HTML, renders each file, indexes every heading, and installs the result. Your own project's
-  documentation then searches like any other docset.
+- **Index a folder you have**: `docent browse ~/code/myproject` (or `docent index`, or
+  ⇧⌘I in the app) walks it for Markdown and HTML, renders each file, indexes every heading,
+  and installs the result. Your own project's documentation then searches like any other
+  docset.
 - **Build one from generated docs** with [doc2dash](https://github.com/hynek/doc2dash),
   which turns Sphinx, MkDocs and similar output into a docset:
   `doc2dash -n MyLib docs/_build/html && docent add MyLib.docset`.
@@ -101,10 +106,21 @@ symbol lives in, so you can hand it to something else.
 
 ### 3. Index a repository
 
-In the app: **File ▸ Index Folder…** (⇧⌘I), pick a repository, and it appears in the sidebar
-when it is done. Choosing a folder that is already indexed offers to rebuild it.
+One command, from a folder to a window you can read:
 
-From the terminal:
+```sh
+docent browse ~/code/myproject
+```
+
+It indexes the project if it has not been indexed yet, opens Docent, and selects it with
+everything in it listed — so you can scroll the documentation without typing a search at
+all. Come back to it the same way any time; add `--replace` when the files have moved on.
+
+In the app instead: **File ▸ Index Folder…** (⇧⌘I), pick a repository, and it appears in
+the sidebar when it is done. Choosing a folder that is already indexed offers to rebuild
+it.
+
+And for the terminal alone, `docent index` installs a docset without opening anything:
 
 ```sh
 docent index ~/code/myproject --name "My Project" --keyword mine
@@ -163,6 +179,7 @@ docent find --help       # the same thing
 | `docent path <query>` | print the file (and anchor) a symbol lives in |
 | `docent add <path>` | install a `.docset` folder or a `.tgz` archive; `--replace` |
 | `docent index <folder>` | make a docset from a folder of Markdown and HTML; `--name`, `--keyword`, `--out`, `--replace` |
+| `docent browse [folder]` | index the folder if needed, then open it in the window; `--name`, `--keyword`, `--replace` |
 
 ## What it touches
 
@@ -174,6 +191,9 @@ the only place it writes. It reads:
   docsets you already have just appear,
 - whatever `DOCENT_DOCSETS` names, if you set it (a colon-separated list of folders, which
   replaces all three).
+
+`docent browse` leaves one small file beside the docsets (`.open-request.json`) saying
+which docset the window should open; Docent reads it once and deletes it.
 
 `docent index` reads the folder you point it at — skipping `.git`, build folders and
 symlinks — and writes only the new docset. It never writes to a docset, never deletes one you

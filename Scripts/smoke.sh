@@ -75,6 +75,17 @@ else
     fail=1
 fi
 
+# One command from a folder to the window. The launch itself is off: a window opening on
+# the machine running the smoke test is not a result.
+run "mkdir -p $WORK/proj && printf '# Proj\\n\\n## Setup\\n\\nRun make.\\n' > $WORK/proj/README.md"
+run "DOCENT_NO_LAUNCH=1 docent browse $WORK/proj --name Proj --keyword proj"
+check "browse indexes the folder" "indexed Proj"
+check "browse says it is opening the window" "opening it in Docent"
+run "DOCENT_NO_LAUNCH=1 docent browse $WORK/proj --name Proj --keyword proj"
+check "browsing again opens what is there" "already indexed"
+run "docent find proj:Setup"
+check "what browse indexed is searchable" "Setup"
+
 run "docent show Nothing-Like-This; echo exit=\$?"
 check "a miss explains itself" "nothing is called"
 check "a miss exits non-zero" "exit=1"

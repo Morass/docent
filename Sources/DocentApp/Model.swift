@@ -97,6 +97,25 @@ final class Browser: ObservableObject {
         index(folder: pending.folder, name: pending.name, keyword: pending.keyword, replace: true)
     }
 
+    /// What `docent browse` asked the window to show, if anything. Applied when the window
+    /// appears and whenever Docent comes forward, because the terminal can ask for a docset
+    /// while the window is already open — and then macOS delivers no launch arguments.
+    @discardableResult
+    func applyOpenRequest(at url: URL? = nil, now: Date = Date()) -> Bool {
+        let url = url ?? OpenRequest.url(library: service.library)
+        guard let request = OpenRequest.consume(at: url, now: now) else { return false }
+        reloadDocsets()
+        if let wanted = request.docset {
+            if docsets.contains(where: { service.matches(docset: $0, hint: wanted) }) {
+                docsetFilter = wanted
+            } else {
+                status = "“\(wanted)” is not in the library."
+            }
+        }
+        if let query = request.query { self.query = query }
+        return true
+    }
+
     func reloadDocsets() {
         docsets = service.docsets()
         status = docsets.isEmpty ? Browser.emptyLibraryMessage : ""
