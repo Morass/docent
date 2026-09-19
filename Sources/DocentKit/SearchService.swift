@@ -70,7 +70,32 @@ public struct SearchService: Sendable {
             let rows = (try? index.candidates(matching: query.text, limit: perDocsetLimit)) ?? []
             candidates.append(contentsOf: rows.map { (docset, $0) })
         }
+        // Nothing typed means "show me what is in here", and index order shows a reader the
+        // insides of a build script first. Lead with the way in, then the documents, then
+        // the types, then everything else.
+        if query.text.isEmpty {
+            let ordered = candidates.sorted { a, b in
+                let rankA = SearchService.browseRank(a.entry, in: a.docset)
+                let rankB = SearchService.browseRank(b.entry, in: b.docset)
+                if rankA != rankB { return rankA < rankB }
+                if a.docset.name != b.docset.name { return a.docset.name < b.docset.name }
+                return a.entry.name.localizedCaseInsensitiveCompare(b.entry.name) == .orderedAscending
+            }
+            return Array(ordered.prefix(limit)).map { Match(docset: $0.docset, entry: $0.entry, score: 0) }
+        }
         return Ranking.rank(candidates, query: query.text, limit: limit)
+    }
+
+    /// Where an entry belongs in the list when a docset is simply being browsed.
+    static func browseRank(_ entry: IndexEntry, in docset: Docset) -> Int {
+        if entry.path == docset.indexPage { return 0 }
+        switch entry.type {
+        case "Guide": return 1
+        case "File": return 4
+        case "Class", "Struct", "Enum", "Protocol", "Interface", "Trait", "Type", "Module": return 2
+        case "Section": return 3
+        default: return 5
+        }
     }
 
     /// Pages whose *text* mentions the query, for docsets Docent indexed itself.

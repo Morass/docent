@@ -98,11 +98,28 @@ final class SourceSymbolsTests: XCTestCase {
 
     func testAWordThatOnlyLooksLikeADeclaration() {
         let found = symbols("""
-        let result = thing.func_like()
+        public let result = thing.func_like()
         // func commented() {}
         """, .swift)
         XCTAssertNil(named(found, "commented"))
         XCTAssertEqual(named(found, "result")?.kind, "Constant")
+    }
+
+    /// A script is a program, not an API: its top-level working variables would otherwise
+    /// open the docset with `w`, `ink` and `out`, which is how daub's first index looked.
+    func testAScriptsWorkingVariablesAreNotEntries() {
+        let found = symbols("""
+        let w = 1200
+        var ink = 0.5
+
+        /// How wide the paper is.
+        let paper = 40
+        public let exported = 1
+        """, .swift)
+        XCTAssertNil(named(found, "w"))
+        XCTAssertNil(named(found, "ink"))
+        XCTAssertEqual(named(found, "paper")?.kind, "Constant", "a documented constant is API")
+        XCTAssertEqual(named(found, "exported")?.kind, "Constant", "a public constant is API")
     }
 
     // MARK: - Other languages

@@ -246,6 +246,16 @@ extension SourceSymbols {
                     // A local inside a function body is not API; only members and top-level
                     // declarations are worth an entry.
                     guard isMemberLevel else { continue }
+                    // A script's top-level `let w = 40` is a local with nowhere to hide, and
+                    // a docset that opens with `w`, `ink` and `out` looks like nonsense.
+                    // At the top level, something has to mark it as API.
+                    if container == nil {
+                        let isDocumented = !doc.isEmpty
+                        let isExported = ["public", "open", "package", "pub", "static"].contains {
+                            trimmed.hasPrefix($0 + " ") || trimmed.contains(" " + $0 + " ")
+                        }
+                        guard isDocumented || isExported else { doc.clear(); continue }
+                    }
                     symbols.append(Symbol(name: qualified(name),
                                           kind: keyword == "let" || keyword == "const" ? "Constant" : "Property",
                                           declaration: trimmed, doc: doc.take(), line: number))

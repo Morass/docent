@@ -247,7 +247,9 @@ public struct Indexer {
 
         try Data(DocSite.overview(name: name, pages: sitePages, readme: readme).utf8)
             .write(to: documents.appendingPathComponent("index.html"))
-        rows.append(IndexEntry(name: name, type: "Guide", path: "index.html"))
+        // Named for what it is: the README's own entry already carries the project's name,
+        // and two identical rows in the list tell the reader nothing.
+        rows.append(IndexEntry(name: "Overview", type: "Guide", path: "index.html"))
 
         let index = resources.appendingPathComponent("docSet.dsidx")
         try write(rows, to: index)

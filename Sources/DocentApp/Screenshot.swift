@@ -19,11 +19,19 @@ enum Screenshot {
     static func scheduleIfRequested(browser: Browser) {
         guard let path = ProcessInfo.processInfo.environment["DOCENT_SCREENSHOT"] else { return }
         let query = ProcessInfo.processInfo.environment["DOCENT_SCREENSHOT_QUERY"] ?? "Print"
+        // With a docset named and no query, the window shows that docset's front page —
+        // which is the picture worth taking of a project Docent indexed.
+        let docset = ProcessInfo.processInfo.environment["DOCENT_SCREENSHOT_DOCSET"]
 
         // Two hops through the run loop: one to let SwiftUI build the window, one to let
         // the web view finish drawing the page it was given.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            browser.query = query
+            if let docset {
+                browser.docsetFilter = docset
+                browser.query = ProcessInfo.processInfo.environment["DOCENT_SCREENSHOT_QUERY"] ?? ""
+            } else {
+                browser.query = query
+            }
             browser.searchAndWait()
             resizeWindow()
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
