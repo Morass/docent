@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="667" height="158" viewBox="0 0 667 158" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">
+<rect width="100%" height="100%" rx="10" fill="#1d1f26"/>
+<text x="22.00" y="35.00" xml:space="preserve" fill="#5ac27a" font-weight="600">$</text>
+<text x="30.42" y="35.00" xml:space="preserve" fill="#e6e6ea"> docent index ~/code/daub --name Daub --keyword daub</text>
+<text x="22.00" y="54.00" xml:space="preserve" fill="#e6e6ea">indexed </text>
+<text x="89.36" y="54.00" xml:space="preserve" fill="#e6e6ea" font-weight="600">Daub</text>
+<text x="123.04" y="54.00" xml:space="preserve" fill="#e6e6ea"> (daub:) — 29 files, 711 entries, 661 declarations, 2 pictures</text>
+<text x="22.00" y="73.00" xml:space="preserve" fill="#e6e6ea" opacity="0.62">  ~/Library/Application Support/Docent/DocSets/Daub.docset</text>
+<text x="22.00" y="92.00" xml:space="preserve" fill="#e6e6ea" opacity="0.62">  try: docent find daub:&lt;something&gt;</text>
+<text x="22.00" y="111.00" xml:space="preserve" fill="#e6e6ea" opacity="0.62">  or read it in the window: docent browse ~/code/daub</text>
+<text x="22.00" y="130.00" xml:space="preserve" fill="#5ac27a" font-weight="600">$</text>
+</svg>
+

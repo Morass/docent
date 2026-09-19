@@ -34,10 +34,32 @@ enum Screenshot {
             }
             browser.searchAndWait()
             resizeWindow()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            // Wait for the page to actually have something on it. A fixed delay produced a
+            // blank page in the README whenever the machine was busy.
+            waitForPage {
                 snapshotWebView {
                     capture(to: URL(fileURLWithPath: path))
                     NSApp.terminate(nil)
+                }
+            }
+        }
+    }
+
+    /// Polls the web view until it has drawn something, then gives up after a while so a
+    /// genuinely empty page still produces a picture rather than hanging the harness.
+    private static func waitForPage(attempt: Int = 0, then done: @escaping () -> Void) {
+        guard let window = mainWindow(),
+              let root = window.contentView?.superview ?? window.contentView,
+              let webView = findWebView(in: root), attempt < 60 else {
+            return DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: done)
+        }
+        webView.evaluateJavaScript("document.readyState === 'complete' && document.body.innerText.length > 40") { value, _ in
+            if (value as? Bool) == true {
+                // One more beat for images and the highlighter.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: done)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    waitForPage(attempt: attempt + 1, then: done)
                 }
             }
         }

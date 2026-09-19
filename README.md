@@ -2,19 +2,23 @@
 
 **Read offline documentation sets on a Mac — in a window, or straight from the terminal.**
 
-<p align="center"><img src="docs/images/app.png" alt="The Docent window: docsets on the left, search results in the middle, the page on the right" width="900"></p>
+<p align="center"><img src="docs/images/app.png" alt="The Docent window: docsets on the left, a project laid out as a tree in the middle, its overview page on the right" width="900"></p>
 
 Docsets are the offline documentation format used by Dash and Zeal: a folder with an index
 and a tree of HTML pages. Docent opens the ones you already have — no account, no
-subscription, nothing downloaded behind your back — and gives you one search across all of
-them, in an app and in a command you can pipe.
+subscription, nothing downloaded behind your back — and it can make one out of a project of
+your own, so your code reads like documentation next to everything else.
 
+- **Browse** a project as a tree: folders, the files in them, and what each file declares,
+  with a type's methods and properties under the type.
 - **Search** every docset at once, exactly or loosely: `NSPast` finds `NSPasteboard`.
 - **Read** a symbol's page in the window, pictures and all, or print it as text with
   `docent show`.
-- **Index your own project**: point the app (⇧⌘I) or `docent browse` at a repository and
-  both halves of it become searchable — the Markdown *and* the code, every type, function,
-  method and property with the documentation comment written above it.
+- **Index your own project** with one command — `docent browse ~/code/myproject` — or ⇧⌘I
+  in the app. Markdown, HTML *and* code: every type, function, method and property, with
+  the documentation comment written above it.
+- **Follow a name** to where it is declared, then come straight back: links, a Back button,
+  and the place on the page you left.
 - **Read comfortably.** Pages are painted to match the app — light or dark, your choice —
   and code blocks are syntax-highlighted even when the docset ships them plain.
 - **Keep it offline.** Docent never opens a network connection, and pages you read cannot
@@ -113,9 +117,10 @@ One command, from a folder to a window you can read:
 docent browse ~/code/myproject
 ```
 
-It indexes the project if it has not been indexed yet, opens Docent, and selects it with
-everything in it listed — so you can scroll the documentation without typing a search at
-all. Come back to it the same way any time; add `--replace` when the files have moved on.
+<p align="center"><img src="docs/images/index.svg" alt="docent index reporting the files, declarations and pictures it found" width="820"></p>
+
+It indexes the project if it has not been indexed yet, opens Docent, and shows it. Come
+back to it the same way any time; add `--replace` when the files have moved on.
 
 What you get is a small documentation set, not a list of files. The docset opens on an
 **overview**: your README, then every document, every source file grouped by folder, and
@@ -128,10 +133,13 @@ Rust, JavaScript and TypeScript files become pages of their declarations: every 
 function, method, property and enum case is an entry, carrying the documentation comment
 written above it and the line it is on.
 
+<p align="center"><img src="docs/images/app-page.png" alt="A class page: its declaration, its documentation comment and its members, each one a link" width="900"></p>
+
 **Names are linked.** A type mentioned in a doc comment, in a signature or in your prose
 becomes a link to where it is declared, and links between your own Markdown files keep
-working inside the docset. A name that means two different things in one project is left
-unlinked rather than pointed at the wrong one.
+working inside the docset. Click one to find out what it is, then **Back** (⌘[ or the
+button above the page) returns you to the paragraph you left. A name that means two
+different things in one project is left unlinked rather than pointed at the wrong one.
 
 ```sh
 docent find mine:Canvas.draw      # the method, wherever it lives
@@ -176,10 +184,19 @@ the search to one at a time.
 Pick a docset and type nothing, and the middle column becomes a **navigator**: the project
 as folders, the files in them, and what each file declares, with a type's methods and
 properties under the type. Click a row to read it, or walk it from the keyboard — ↑ and ↓
-move, → opens a row, ← closes it and steps back out. Start typing and the same column
-becomes your search results; clear the field and the tree comes back where you left it.
+move, → opens a row, ← closes it and steps back out.
+
+Start typing and the same column becomes your search results; clear the field and the tree
+comes back where you left it.
+
+<p align="center"><img src="docs/images/app-search.png" alt="Searching the library: matches in the middle column, the page beside them" width="900"></p>
+
 A docset that did not come from `docent index` is grouped by kind instead — classes,
 functions, methods — so anything in your library can be browsed rather than guessed at.
+
+**Back and forward** work on everything you read, whether you got there by search, by the
+tree, or by clicking a name inside a page: ⌘[ and ⌘], or the arrows above the page. Going
+back returns you to where you were on that page, not to the top of it.
 
 Pages are repainted for reading rather than shown as the docset's own stylesheet left them:
 white with near-black text, or a dark ground with light text, whichever matches the app —
@@ -235,8 +252,8 @@ the only place it writes. It reads:
 `docent browse` leaves one small file beside the docsets (`.open-request.json`) saying
 which docset the window should open; Docent reads it once and deletes it.
 
-`docent index` reads the folder you point it at — skipping `.git`, build folders and
-symlinks — and writes only the new docset. It never writes to a docset, never deletes one you
+`docent index` reads the folder you point it at — skipping `.git`, `node_modules`, build
+folders and symlinks — and writes only the new docset, pictures included. It never writes to a docset, never deletes one you
 did not ask it to replace, and never opens a network connection. Pages you read cannot either: JavaScript is off, remote images,
 stylesheets and fonts are blocked, and a link to the web opens in your own browser instead
 of loading inside Docent. A docset that points at a file outside itself is refused rather
