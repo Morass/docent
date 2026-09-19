@@ -10,7 +10,8 @@ subscription, nothing downloaded behind your back — and gives you one search a
 them, in an app and in a command you can pipe.
 
 - **Search** every docset at once, exactly or loosely: `NSPast` finds `NSPasteboard`.
-- **Read** a symbol's page in the window, or print it as text with `docent show`.
+- **Read** a symbol's page in the window, pictures and all, or print it as text with
+  `docent show`.
 - **Index your own** documentation: point the app (⇧⌘I) or `docent index` at a repository
   and its Markdown becomes searchable next to everything else.
 - **Read comfortably.** Pages are painted to match the app — light or dark, your choice —
@@ -127,6 +128,10 @@ docent index ~/code/myproject --name "My Project" --keyword mine
 docent find mine:install
 ```
 
+Pictures come with it: a screenshot or diagram a page points at is copied into the docset
+and shown where it belongs, so a README that opens with a screenshot still does. Images
+hosted on the web are not fetched — Docent stays offline — and appear as their caption.
+
 Every Markdown and HTML file becomes a page and every heading becomes an entry, so
 `docent show mine:"Running the tests"` prints that section and nothing else. Docsets built
 this way are also searchable by **text**: when nothing is *called* what you typed, Docent
@@ -206,6 +211,8 @@ than followed.
 
 - macOS 14 or later, and docsets in the Dash format. Other documentation formats need
   converting first (see [doc2dash](https://github.com/hynek/doc2dash)).
+- Pictures a page links to on the web are not downloaded, and a picture larger than 16 MB
+  is left where it is.
 - No docset catalogue or downloader: you bring the docsets.
 - `docent show` renders a page as plain text. Tables come out as rows, diagrams and images
   do not come out at all — read those in the window.

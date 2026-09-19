@@ -165,6 +165,7 @@ public enum Markdown {
     th, td { border: 1px solid; padding: .4rem .6rem; text-align: left; vertical-align: top; }
     blockquote { margin: .8rem 0; padding: .1rem 0 .1rem 1rem; border-left: 3px solid; }
     hr { border: 0; border-top: 1px solid; margin: 2rem 0 1rem; }
+    img { max-width: 100%; height: auto; border-radius: 6px; display: block; margin: 1rem 0; }
     .docent-source { font-size: .8rem; opacity: .65; }
     """
 
@@ -238,7 +239,9 @@ public enum Markdown {
     }
 
     /// `[text](target)` — only local and http(s) targets become links, and an http link in a
-    /// page is inert anyway: the reader blocks the network.
+    /// page is inert anyway: the reader blocks the network. `![alt](target)` is a picture,
+    /// which is not a detail: a README that opens with a screenshot used to open with a
+    /// stray "!" and a dead link, and the page made no sense to read.
     private static func links(in text: String) -> String {
         var out = ""
         var rest = Substring(text)
@@ -247,15 +250,34 @@ public enum Markdown {
               let closeParen = rest[closeBracket.upperBound...].range(of: ")") {
             let label = rest[openBracket.upperBound..<closeBracket.lowerBound]
             let target = String(rest[closeBracket.upperBound..<closeParen.lowerBound])
-            out += rest[..<openBracket.lowerBound]
+            var before = rest[..<openBracket.lowerBound]
+            let isImage = before.hasSuffix("!")
+            if isImage { before = before.dropLast() }
+            out += before
             if target.contains("\"") || target.contains(" ") || target.lowercased().hasPrefix("javascript:") {
-                out += "[\(label)](\(escape(target)))"
+                out += "\(isImage ? "!" : "")[\(label)](\(escape(target)))"
+            } else if isImage {
+                // The label has been through the inline passes already, so it is escaped and
+                // may hold markup; an alt attribute takes text and nothing else.
+                out += "<img src=\"\(escape(target))\" alt=\"\(withoutTags(label))\">"
             } else {
                 out += "<a href=\"\(escape(target))\">\(label)</a>"
             }
             rest = rest[closeParen.upperBound...]
         }
         return out + rest
+    }
+
+    /// Escaped HTML with its tags taken out, for somewhere only text is allowed.
+    static func withoutTags(_ html: Substring) -> String {
+        var out = ""
+        var inTag = false
+        for character in html {
+            if character == "<" { inTag = true }
+            else if character == ">" { inTag = false }
+            else if !inTag { out.append(character) }
+        }
+        return out
     }
 
     public static func escape(_ text: String) -> String {

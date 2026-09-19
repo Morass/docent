@@ -13,6 +13,7 @@ public struct Indexer {
         public let files: Int
         public let entries: Int
         public let skipped: Int
+        public let pictures: Int
     }
 
     public enum Failure: Error, CustomStringConvertible {
@@ -76,6 +77,7 @@ public struct Indexer {
         var rows: [IndexEntry] = []
         var files = 0
         var skipped = 0
+        var pictures: [String: String] = [:]      // source path -> path under Documents
         var contents: [(title: String, path: String)] = []
         /// Page text, for the full-text table: searching your own documentation by heading
         /// alone is not what anyone means by "search my docs".
@@ -103,15 +105,38 @@ public struct Indexer {
             let target = documents.appendingPathComponent(pagePath)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
 
+            /// Copies the pictures a page points at and hands back the page pointing at them.
+            func withPictures(_ html: String) throws -> String {
+                let (rewritten, copies) = PageAssets.relocate(
+                    html: html, pagePath: pagePath, sourceFile: file, rootPath: rootPath)
+                for copy in copies where pictures[copy.from.path] == nil {
+                    let into = documents.appendingPathComponent(copy.to)
+                    try fm.createDirectory(at: into.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    if fm.fileExists(atPath: into.path) { try? fm.removeItem(at: into) }
+                    try fm.copyItem(at: copy.from, to: into)
+                    pictures[copy.from.path] = copy.to
+                }
+                return rewritten
+            }
+
             if ["html", "htm"].contains(file.pathExtension.lowercased()) {
-                try data.write(to: target)
+                // The bytes are written as they are unless a picture reference had to move:
+                // rewriting means re-encoding, and a page that declares another charset is
+                // better left alone than half-converted.
+                let isUTF8 = String(data: data, encoding: .utf8) != nil
+                let rewritten = isUTF8 ? try withPictures(text) : text
+                if isUTF8, rewritten != text {
+                    try Data(rewritten.utf8).write(to: target)
+                } else {
+                    try data.write(to: target)
+                }
                 let title = HTMLText.extractTitle(text) ?? relative
                 rows.append(IndexEntry(name: title, type: "Guide", path: pagePath))
                 contents.append((title, pagePath))
                 bodies.append((title, pagePath, HTMLText.render(text).text))
             } else {
                 let page = Markdown.render(text, fallbackTitle: relative)
-                try Markdown.document(page, sourcePath: relative).data(using: .utf8)!.write(to: target)
+                try Data(try withPictures(Markdown.document(page, sourcePath: relative)).utf8).write(to: target)
                 rows.append(IndexEntry(name: page.title, type: "Guide", path: pagePath))
                 contents.append((page.title, pagePath))
                 for heading in page.headings where heading.level > 1 {
@@ -132,7 +157,8 @@ public struct Indexer {
         let index = resources.appendingPathComponent("docSet.dsidx")
         try write(rows, to: index)
         try writeFullText(bodies, to: index)
-        return Report(docset: bundle, files: files, entries: rows.count, skipped: skipped)
+        return Report(docset: bundle, files: files, entries: rows.count, skipped: skipped,
+                      pictures: pictures.count)
     }
 
     /// Every documentation file under the source folder, sorted, with noise folders and
@@ -184,6 +210,17 @@ public struct Indexer {
             path = String(path.dropLast(suffix.count)) + ".html"
         }
         return path
+    }
+
+    /// `Resources/shot.png` → the same shape, with anything awkward in a name flattened.
+    /// Unlike a page, the extension is left alone: it is what makes the file a picture.
+    static func assetPath(for relative: String) -> String {
+        relative.split(separator: "/").map { component in
+            String(component.map { character in
+                character.isLetter || character.isNumber || character == "." || character == "-"
+                    || character == "_" ? character : "-"
+            })
+        }.joined(separator: "/")
     }
 
     static func contentsPage(name: String, entries: [(title: String, path: String)]) -> String {

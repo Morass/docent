@@ -78,7 +78,11 @@ final class Browser: ObservableObject {
                 case .success(let report):
                     self.reloadDocsets()
                     self.docsetFilter = word ?? title
-                    self.status = "Indexed \(title): \(report.files) file\(report.files == 1 ? "" : "s"), \(report.entries) entries."
+                    var line = "Indexed \(title): \(report.files) file\(report.files == 1 ? "" : "s"), \(report.entries) entries"
+                    if report.pictures > 0 {
+                        line += ", \(report.pictures) picture\(report.pictures == 1 ? "" : "s")"
+                    }
+                    self.status = line + "."
                 case .failure(let error):
                     self.status = "Could not index \(title): \(error)"
                 }

@@ -21,6 +21,7 @@ enum SelfTest {
         case "theme": failures = MainActor.assumeIsolated { theme() }
         case "indexui": failures = MainActor.assumeIsolated { indexFromTheWindow() }
         case "openrequest": failures = MainActor.assumeIsolated { openRequestFromTheTerminal() }
+        case "pictures": failures = MainActor.assumeIsolated { pictures() }
         default:
             FileHandle.standardError.write(Data("selftest: no mode called \"\(mode)\"\n".utf8))
             exit(2)
@@ -223,6 +224,78 @@ enum SelfTest {
     /// The menu item's whole job, minus the file panel: index a folder, install it, reload
     /// the library and select it. The panel is three lines in `DocentApp`; this is the part
     /// that can be wrong.
+    /// A picture in someone's README, all the way to the reader: indexed, copied, loaded by
+    /// the real web view. `naturalWidth` is the only honest answer — a broken `<img>` renders
+    /// as nothing and every layer before this one still passes.
+    @MainActor
+    private static func pictures() -> [String] {
+        var failures: [String] = []
+        func check(_ condition: Bool, _ message: String) { if !condition { failures.append(message) } }
+
+        // A 2x2 PNG, built here rather than shipped: a fixture nobody can read is a fixture
+        // nobody can check.
+        let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR4nGP8z8DwnwEJMKEJ0FMAAJ8LAwGVIdJZAAAAAElFTkSuQmCC")!
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("docent-pictures-\(UUID().uuidString)", isDirectory: true)
+        try? fm.createDirectory(at: folder.appendingPathComponent("Resources"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: folder) }
+        try? png.write(to: folder.appendingPathComponent("Resources/shot.png"))
+        try? "# Sample\n\n![A screenshot](Resources/shot.png)\n"
+            .data(using: .utf8)!.write(to: folder.appendingPathComponent("README.md"))
+
+        let docset = folder.appendingPathComponent("Sample.docset")
+        guard let report = try? Indexer(source: folder, name: "Sample", keyword: "sample").build(into: docset) else {
+            return ["the folder could not be indexed"]
+        }
+        check(report.pictures == 1, "the picture was not copied in: \(report.pictures)")
+
+        let page = docset.appendingPathComponent("Contents/Resources/Documents/README.html")
+        let root = docset.appendingPathComponent("Contents/Resources/Documents", isDirectory: true)
+            .resolvingSymlinksInPath()
+
+        /// The width the web view gives the first picture on a page: 0 when it did not load.
+        func loadedWidth(of page: URL) -> Double? {
+            let configuration = WKWebViewConfiguration()
+            configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+            let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 900, height: 600), configuration: configuration)
+            let probe = LoadProbe()
+            probe.root = root
+            webView.navigationDelegate = probe
+            webView.loadFileURL(page, allowingReadAccessTo: root)
+
+            let deadline = Date().addingTimeInterval(10)
+            while probe.finished == nil, Date() < deadline {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+            guard probe.finished != nil else { return nil }
+
+            var width: Double?
+            var done = false
+            // The picture is a subresource, so it can still be arriving when the navigation
+            // finishes; ask until it settles rather than once.
+            for _ in 0..<40 {
+                done = false
+                webView.evaluateJavaScript("(document.images[0]||{}).naturalWidth||0") { value, _ in
+                    width = (value as? NSNumber)?.doubleValue
+                    done = true
+                }
+                while !done { RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02)) }
+                if (width ?? 0) > 0 { break }
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+            return width
+        }
+
+        check((loadedWidth(of: page) ?? 0) > 0, "the page shows a broken picture")
+
+        // The negative control: with the copy deleted, the same check must fail. Otherwise
+        // it is measuring nothing.
+        try? fm.removeItem(at: docset.appendingPathComponent("Contents/Resources/Documents/assets/Resources/shot.png"))
+        check((loadedWidth(of: page) ?? 0) == 0, "a page with no picture file still passed the picture check")
+
+        return failures
+    }
+
     /// `docent browse` asks for a docset by writing a file; this is the other half of that
     /// handoff, in the real model. The command's own tests prove the file gets written —
     /// only the window can prove it gets acted on.

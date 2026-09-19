@@ -186,6 +186,7 @@ public enum HTMLText {
                 index = html.index(after: index)
                 continue
             }
+            let tagSource = html[index..<tag.end]
             index = tag.end
 
             if let waiting = skipUntil {
@@ -233,7 +234,14 @@ public enum HTMLText {
             default:
                 if blockTags.contains(tag.name) { newline(tag.name == "p" ? 2 : 1) }
             }
-            if tag.name == "img", !tag.isClosing { flushText() }
+            // A picture in text is not nothing: say what it was of, so a page that opens
+            // with a screenshot does not open with a blank.
+            if tag.name == "img", !tag.isClosing {
+                flushText()
+                if let alt = attribute("alt", in: tagSource)?.trimmed, !alt.isEmpty {
+                    out += "[\(alt)]"
+                }
+            }
         }
         flushText()
 
@@ -246,6 +254,29 @@ public enum HTMLText {
             .replacingOccurrences(of: "``", with: "")
             .collapsingBlankLines
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// One attribute out of a tag's own source, quoted or not.
+    static func attribute(_ name: String, in tag: Substring) -> String? {
+        let lowered = tag.lowercased()
+        guard let key = lowered.range(of: name + "=") else { return nil }
+        var cursor = tag.index(tag.startIndex, offsetBy: lowered.distance(from: lowered.startIndex, to: key.upperBound))
+        guard cursor < tag.endIndex else { return nil }
+        var value = ""
+        if tag[cursor] == "\"" || tag[cursor] == "'" {
+            let quote = tag[cursor]
+            cursor = tag.index(after: cursor)
+            while cursor < tag.endIndex, tag[cursor] != quote {
+                value.append(tag[cursor])
+                cursor = tag.index(after: cursor)
+            }
+        } else {
+            while cursor < tag.endIndex, !tag[cursor].isWhitespace, tag[cursor] != ">" {
+                value.append(tag[cursor])
+                cursor = tag.index(after: cursor)
+            }
+        }
+        return decodeEntities(value)
     }
 
     private struct Tag {

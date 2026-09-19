@@ -669,6 +669,7 @@ func runIndex(_ arguments: Arguments) throws {
     var line = "indexed \(bold(safe(name)))"
     if let keyword { line += " (\(safe(keyword)):)" }
     line += " — \(report.files) file\(report.files == 1 ? "" : "s"), \(report.entries) entries"
+    if report.pictures > 0 { line += ", \(report.pictures) picture\(report.pictures == 1 ? "" : "s")" }
     if report.skipped > 0 { line += dim(", \(report.skipped) skipped") }
     print(out: line)
     print(out: dim("  " + destination.path))
@@ -762,6 +763,7 @@ func runBrowse(_ arguments: Arguments) throws {
             line += bold(safe(name))
             if let keyword { line += " (\(safe(keyword)):)" }
             line += " — \(report.files) file\(report.files == 1 ? "" : "s"), \(report.entries) entries"
+            if report.pictures > 0 { line += ", \(report.pictures) picture\(report.pictures == 1 ? "" : "s")" }
             if report.skipped > 0 { line += dim(", \(report.skipped) skipped") }
             print(out: line)
             if report.entries == 0 {
