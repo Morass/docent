@@ -370,6 +370,14 @@ enum SelfTest {
         browser.searchAndWait()
         check(!browser.results.isEmpty, "a word in the prose of the folder just indexed was not found")
 
+        // Picking the docset with nothing typed lands on its front page, not on an
+        // arbitrary heading.
+        browser.query = ""
+        browser.docsetFilter = "sample"
+        browser.searchAndWait()
+        check(browser.selectedMatch?.entry.path == "index.html",
+              "selecting the docset did not land on its overview: \(browser.selectedMatch?.entry.path ?? "nothing")")
+
         browser.query = "Kern.tighten"
         browser.searchAndWait()
         check(browser.results.first?.entry.type == "Method",

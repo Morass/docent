@@ -251,3 +251,48 @@ final class IndexedCodeTests: XCTestCase {
         XCTAssertEqual(copy?.path.contains("#"), true, "\(copy?.path ?? "nothing")")
     }
 }
+
+// MARK: - The whole project, linked together
+
+extension IndexedCodeTests {
+    /// The three things that make it documentation rather than a file list: a front page
+    /// that opens with the README, a link from one document to another that survives
+    /// indexing, and a type named in a doc comment that takes you to the type.
+    func testTheDocsetReadsAsOneSetOfDocumentation() throws {
+        try "# Project\n\nSee [the design](docs/DESIGN.md).\n"
+            .write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("docs"),
+                                                withIntermediateDirectories: true)
+        try "# Design\n\nThe Canvas holds the pixels.\n"
+            .write(to: root.appendingPathComponent("docs/DESIGN.md"), atomically: true, encoding: .utf8)
+        try """
+        /// Draws onto a Canvas.
+        public struct Pen {}
+        """.write(to: root.appendingPathComponent("Sources/Pen.swift"), atomically: true, encoding: .utf8)
+
+        let out = root.appendingPathComponent("Linked.docset")
+        _ = try Indexer(source: root, name: "Project", keyword: "proj").build(into: out)
+        let documents = out.appendingPathComponent("Contents/Resources/Documents")
+        func page(_ path: String) throws -> String {
+            try String(contentsOf: documents.appendingPathComponent(path), encoding: .utf8)
+        }
+
+        let overview = try page("index.html")
+        XCTAssertTrue(overview.contains("See"), "the overview does not open with the README: \(overview)")
+        XCTAssertTrue(overview.contains("href=\"Sources/Canvas.swift.html\""), overview)
+        XCTAssertTrue(overview.contains("Types"), overview)
+
+        let readme = try page("README.html")
+        XCTAssertTrue(readme.contains("href=\"docs/DESIGN.html\""),
+                      "the link to another document was left pointing at the .md: \(readme)")
+        XCTAssertTrue(readme.contains("Overview</a>"), "no way back to the front page")
+
+        let design = try page("docs/DESIGN.html")
+        XCTAssertTrue(design.contains("Canvas.swift.html#canvas\">Canvas</a>"),
+                      "a type named in prose is not linked: \(design)")
+
+        let pen = try page("Sources/Pen.swift.html")
+        XCTAssertTrue(pen.contains("Canvas.swift.html#canvas\">Canvas</a>"),
+                      "a type named in a doc comment is not linked: \(pen)")
+    }
+}

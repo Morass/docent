@@ -192,11 +192,22 @@ final class Browser: ObservableObject {
                 guard let self, self.generation == mine else { return }
                 self.results = found
                 self.status = found.isEmpty ? "This docset has no entries." : ""
-                if let current = self.selection, found.contains(where: { $0.id == current }) {
+                // Picking a docset means "show me this": land on its front page, which for
+                // a project Docent indexed is the README with the rest of the project laid
+                // out under it. Keeping whatever was selected before would leave the reader
+                // wherever their last search happened to stop.
+                let front = found.first { match in
+                    match.entry.path == match.docset.indexPage
+                        || match.entry.path.hasPrefix(match.docset.indexPage + "#")
+                }
+                if let front {
+                    self.selection = front.id
+                } else if let current = self.selection, found.contains(where: { $0.id == current }) {
                     self.completedGeneration = mine
                     return
+                } else {
+                    self.selection = found.first?.id
                 }
-                self.selection = found.first?.id
                 self.completedGeneration = mine
             }
         }

@@ -85,35 +85,78 @@ public struct Indexer {
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
             .write(to: bundle.appendingPathComponent("Contents/Info.plist"))
 
-        var rows: [IndexEntry] = []
-        var files = 0
-        var skipped = 0
-        var pictures: [String: String] = [:]      // source path -> path under Documents
-        var symbols = 0
-        var contents: [(title: String, path: String)] = []
-        /// Page text, for the full-text table: searching your own documentation by heading
-        /// alone is not what anyone means by "search my docs".
-        var bodies: [(title: String, path: String, text: String)] = []
-
         // Both sides resolved, and compared as a prefix rather than by length: a source
         // under /var (which is /private/var) otherwise loses the first few characters of
         // every relative path.
         let rootPath = source.resolvingSymlinksInPath().standardizedFileURL.path
+
+        // Pass one: what is here, and what each file declares. Nothing can be written until
+        // this is finished, because a page cannot link to a name the walk has not reached.
+        struct Planned {
+            let url: URL
+            let relative: String
+            let pagePath: String
+            let language: SourceSymbols.Language?
+            let symbols: [SourceSymbols.Symbol]
+            let entries: [SourcePage.Entry]
+            let title: String
+        }
+
+        var planned: [Planned] = []
+        var skipped = 0
         for file in try documentationFiles() {
             let filePath = file.resolvingSymlinksInPath().standardizedFileURL.path
             guard filePath.hasPrefix(rootPath + "/") else { skipped += 1; continue }
             let relative = String(filePath.dropFirst(rootPath.count + 1))
-            guard let size = try? fm.attributesOfItem(atPath: file.path)[.size] as? Int, size <= Indexer.maxFileBytes else {
-                skipped += 1
-                continue
-            }
-            guard let data = try? Data(contentsOf: file),
-                  let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+            guard let size = try? fm.attributesOfItem(atPath: file.path)[.size] as? Int,
+                  size <= Indexer.maxFileBytes,
+                  let text = Indexer.text(of: file) else {
                 skipped += 1
                 continue
             }
 
             let pagePath = Indexer.pagePath(for: relative)
+            if let language = includeCode ? SourceSymbols.Language.forExtension(file.pathExtension) : nil {
+                let found = SourceSymbols.symbols(in: text, language: language)
+                planned.append(Planned(url: file, relative: relative, pagePath: pagePath,
+                                       language: language, symbols: found,
+                                       entries: SourcePage.entries(for: found), title: relative))
+            } else {
+                let title: String
+                if ["html", "htm"].contains(file.pathExtension.lowercased()) {
+                    title = HTMLText.extractTitle(text) ?? relative
+                } else {
+                    title = Markdown.render(text, fallbackTitle: relative).title
+                }
+                planned.append(Planned(url: file, relative: relative, pagePath: pagePath,
+                                       language: nil, symbols: [], entries: [], title: title))
+            }
+        }
+
+        let sitePages = planned.map { plan in
+            DocSite.Page(relative: plan.relative, pagePath: plan.pagePath, title: plan.title,
+                         kind: plan.language.map { .code($0.name) } ?? .document,
+                         anchors: plan.entries.map { ($0.name, $0.kind, $0.anchor) })
+        }
+        let table = DocSite.linkTable(for: sitePages)
+        let pagePaths = Dictionary(planned.map { ($0.relative, $0.pagePath) },
+                                   uniquingKeysWith: { first, _ in first })
+
+        // Pass two: write the pages, now that every name in the project has somewhere to go.
+        var rows: [IndexEntry] = []
+        var files = 0
+        var pictures: [String: String] = [:]      // source path -> path under Documents
+        var symbols = 0
+        /// Page text, for the full-text table: searching your own documentation by heading
+        /// alone is not what anyone means by "search my docs".
+        var bodies: [(title: String, path: String, text: String)] = []
+        var readme: String? = nil
+
+        for plan in planned {
+            guard let text = Indexer.text(of: plan.url) else { skipped += 1; continue }
+            let relative = plan.relative
+            let pagePath = plan.pagePath
+            let file = plan.url
             let target = documents.appendingPathComponent(pagePath)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
 
@@ -131,12 +174,18 @@ public struct Indexer {
                 return rewritten
             }
 
-            if let language = includeCode ? SourceSymbols.Language.forExtension(file.pathExtension) : nil {
-                let found = SourceSymbols.symbols(in: text, language: language)
-                let page = SourcePage.render(symbols: found, path: relative, language: language)
+            /// Names this project documents become links to where they are documented.
+            func withLinks(_ html: String, own: Set<String> = []) -> String {
+                DocSite.crossLink(html, from: pagePath, table: table, skipping: own)
+            }
+
+            if let language = plan.language {
+                let page = SourcePage.render(
+                    symbols: plan.symbols, path: relative, language: language,
+                    breadcrumb: DocSite.breadcrumb(for: relative, pagePath: pagePath),
+                    link: { withLinks($0, own: Set(plan.symbols.map(\.name))) })
                 try Data(page.html.utf8).write(to: target)
                 rows.append(IndexEntry(name: relative, type: "File", path: pagePath))
-                contents.append((relative, pagePath))
                 for entry in page.entries {
                     rows.append(IndexEntry(name: entry.name, type: entry.kind,
                                            path: "\(pagePath)#\(entry.anchor)"))
@@ -144,43 +193,59 @@ public struct Indexer {
                 // The whole file goes in the text index: searching your own repository for a
                 // word that is only in the code is exactly what this is for.
                 bodies.append((relative, pagePath, text))
-                symbols += found.count
+                symbols += plan.symbols.count
                 files += 1
                 continue
             }
 
             if ["html", "htm"].contains(file.pathExtension.lowercased()) {
-                // The bytes are written as they are unless a picture reference had to move:
+                // The bytes are written as they are unless a reference had to move:
                 // rewriting means re-encoding, and a page that declares another charset is
                 // better left alone than half-converted.
-                let isUTF8 = String(data: data, encoding: .utf8) != nil
-                let rewritten = isUTF8 ? try withPictures(text) : text
+                let isUTF8 = String(data: (try? Data(contentsOf: file)) ?? Data(), encoding: .utf8) != nil
+                var rewritten = text
+                if isUTF8 {
+                    rewritten = try withPictures(text)
+                    rewritten = DocSite.rewriteDocumentLinks(rewritten, pagePath: pagePath,
+                                                             sourceRelative: relative, pages: pagePaths)
+                }
                 if isUTF8, rewritten != text {
                     try Data(rewritten.utf8).write(to: target)
                 } else {
-                    try data.write(to: target)
+                    try (try? Data(contentsOf: file))?.write(to: target)
                 }
-                let title = HTMLText.extractTitle(text) ?? relative
-                rows.append(IndexEntry(name: title, type: "Guide", path: pagePath))
-                contents.append((title, pagePath))
-                bodies.append((title, pagePath, HTMLText.render(text).text))
+                rows.append(IndexEntry(name: plan.title, type: "Guide", path: pagePath))
+                bodies.append((plan.title, pagePath, HTMLText.render(text).text))
             } else {
                 let page = Markdown.render(text, fallbackTitle: relative)
-                try Data(try withPictures(Markdown.document(page, sourcePath: relative)).utf8).write(to: target)
+                var html = Markdown.document(page, sourcePath: relative)
+                html = try withPictures(html)
+                html = DocSite.rewriteDocumentLinks(html, pagePath: pagePath,
+                                                    sourceRelative: relative, pages: pagePaths)
+                html = withLinks(html)
+                html = html.replacingOccurrences(
+                    of: "<body>\n",
+                    with: "<body>\n" + DocSite.breadcrumb(for: relative, pagePath: pagePath))
+                try Data(html.utf8).write(to: target)
                 rows.append(IndexEntry(name: page.title, type: "Guide", path: pagePath))
-                contents.append((page.title, pagePath))
                 for heading in page.headings where heading.level > 1 {
                     rows.append(IndexEntry(name: heading.text, type: "Section", path: "\(pagePath)#\(heading.anchor)"))
                 }
                 bodies.append((page.title, pagePath, text))
+                // The project's own README is what the overview should open with.
+                if readme == nil, relative.lowercased().hasPrefix("readme.") {
+                    readme = DocSite.rewriteDocumentLinks(
+                        try withPictures(page.html), pagePath: "index.html",
+                        sourceRelative: relative, pages: pagePaths)
+                    readme = DocSite.crossLink(readme!, from: "index.html", table: table)
+                }
             }
             files += 1
         }
 
         guard files > 0 else { throw Failure.empty(source.path) }
 
-        try Indexer.contentsPage(name: name, entries: contents)
-            .data(using: .utf8)!
+        try Data(DocSite.overview(name: name, pages: sitePages, readme: readme).utf8)
             .write(to: documents.appendingPathComponent("index.html"))
         rows.append(IndexEntry(name: name, type: "Guide", path: "index.html"))
 
@@ -189,6 +254,13 @@ public struct Indexer {
         try writeFullText(bodies, to: index)
         return Report(docset: bundle, files: files, entries: rows.count, skipped: skipped,
                       pictures: pictures.count, symbols: symbols)
+    }
+
+    /// A file's text, whatever it claims to be encoded as. Latin-1 never fails, so a file
+    /// Docent cannot read as UTF-8 is still indexed rather than skipped.
+    static func text(of file: URL) -> String? {
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        return String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
     }
 
     /// Every documentation file under the source folder, sorted, with noise folders and

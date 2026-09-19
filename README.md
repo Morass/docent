@@ -117,10 +117,21 @@ It indexes the project if it has not been indexed yet, opens Docent, and selects
 everything in it listed — so you can scroll the documentation without typing a search at
 all. Come back to it the same way any time; add `--replace` when the files have moved on.
 
+What you get is a small documentation set, not a list of files. The docset opens on an
+**overview**: your README, then every document, every source file grouped by folder, and
+every type the project declares — each one a link. Each source file has its own page with
+its contents at the top and each type's members listed under it, and a link back to the
+overview.
+
 **Your code is indexed too**, which is most of what a repository is. Swift, Python, Go,
 Rust, JavaScript and TypeScript files become pages of their declarations: every type,
 function, method, property and enum case is an entry, carrying the documentation comment
 written above it and the line it is on.
+
+**Names are linked.** A type mentioned in a doc comment, in a signature or in your prose
+becomes a link to where it is declared, and links between your own Markdown files keep
+working inside the docset. A name that means two different things in one project is left
+unlinked rather than pointed at the wrong one.
 
 ```sh
 docent find mine:Canvas.draw      # the method, wherever it lives
