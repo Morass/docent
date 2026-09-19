@@ -21,8 +21,25 @@ enum RemoteContentBlock {
     private(set) static var ruleList: WKContentRuleList?
     private static var compiling = false
 
+    /// Whether the block is ready, as something SwiftUI watches.
+    ///
+    /// Nothing may load before the rule list exists, and compiling it takes a moment on a
+    /// cold launch. Without a signal the view could refuse to load the first page and then
+    /// never hear that the block had arrived — the window came up with a blank white page
+    /// and stayed that way until something else made it redraw.
+    @MainActor
+    final class Readiness: ObservableObject {
+        static let shared = Readiness()
+        @Published private(set) var isReady = false
+        func markReady() { isReady = true }
+    }
+
     static func prepare(then done: (() -> Void)? = nil) {
-        if ruleList != nil { done?(); return }
+        if ruleList != nil {
+            Readiness.shared.markReady()
+            done?()
+            return
+        }
         guard !compiling else { return }
         compiling = true
         WKContentRuleListStore.default()?.compileContentRuleList(
@@ -32,6 +49,7 @@ enum RemoteContentBlock {
             compiling = false
             if let error { FileHandle.standardError.write(Data("docent: could not compile the network block: \(error)\n".utf8)) }
             ruleList = list
+            if list != nil { Readiness.shared.markReady() }
             done?()
         }
     }
@@ -73,7 +91,9 @@ struct PageView: NSViewRepresentable {
         // Never load a page before the block list is in place: the first page is exactly
         // when a beacon would fire.
         guard let list = RemoteContentBlock.ruleList else {
-            RemoteContentBlock.prepare { view.needsDisplay = true }
+            // Asking again is what publishes readiness; the view is redrawn by SwiftUI when
+            // it does, and the page loads then.
+            RemoteContentBlock.prepare()
             return
         }
         if !context.coordinator.blocked {

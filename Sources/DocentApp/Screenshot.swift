@@ -51,6 +51,9 @@ enum Screenshot {
         guard let window = mainWindow(),
               let root = window.contentView?.superview ?? window.contentView,
               let webView = findWebView(in: root), attempt < 60 else {
+            // Out of patience: say so, so a blank picture is a loud failure and not a
+            // README image nobody looked at.
+            if attempt >= 60 { note("the page never drew anything — the picture will be blank") }
             return DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: done)
         }
         webView.evaluateJavaScript("document.readyState === 'complete' && document.body.innerText.length > 40") { value, _ in

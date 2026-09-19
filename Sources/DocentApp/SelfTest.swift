@@ -134,6 +134,11 @@ enum SelfTest {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
         guard let list = RemoteContentBlock.ruleList else { return ["the network block list did not compile"] }
+        // The window waits for this flag before it loads anything. If the flag never flips,
+        // the reader gets a blank white page and no way to know why.
+        if !RemoteContentBlock.Readiness.shared.isReady {
+            failures.append("the block compiled but the window was never told, so no page would load")
+        }
 
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false

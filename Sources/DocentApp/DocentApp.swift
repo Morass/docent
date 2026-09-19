@@ -72,6 +72,9 @@ struct DocentApp: App {
 
 struct BrowserWindow: View {
     @ObservedObject var browser: Browser
+    /// Redraws the window when the network block finishes compiling, so the first page
+    /// loads by itself rather than waiting for the next thing the reader does.
+    @ObservedObject private var blockReady = RemoteContentBlock.Readiness.shared
     @FocusState private var searchFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
 
@@ -285,7 +288,8 @@ struct BrowserWindow: View {
 
     private var page: some View {
         Group {
-            if let match = browser.selectedMatch, let location = browser.location(of: match) {
+            if let match = browser.selectedMatch, let location = browser.location(of: match),
+               blockReady.isReady || RemoteContentBlock.ruleList != nil {
                 VStack(spacing: 0) {
                     pageBar(for: match)
                     Divider()
@@ -299,6 +303,14 @@ struct BrowserWindow: View {
                 }
                 .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
                 .navigationTitle("\(match.entry.name) — \(match.docset.name)")
+            } else if browser.selectedMatch != nil {
+                // Something is selected but the reader cannot see it yet: say so, rather
+                // than showing an empty page that looks like a broken one.
+                VStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Preparing the reader…").font(.callout).foregroundStyle(.secondary)
+                }
+                .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView(
                     "Nothing selected",
