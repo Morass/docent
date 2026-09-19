@@ -24,6 +24,7 @@ enum SelfTest {
         case "pictures": failures = MainActor.assumeIsolated { pictures() }
         case "tree": failures = MainActor.assumeIsolated { tree() }
         case "history": failures = MainActor.assumeIsolated { history() }
+        case "quits": failures = MainActor.assumeIsolated { quits() }
         default:
             FileHandle.standardError.write(Data("selftest: no mode called \"\(mode)\"\n".utf8))
             exit(2)
@@ -231,6 +232,15 @@ enum SelfTest {
     /// The menu item's whole job, minus the file panel: index a folder, install it, reload
     /// the library and select it. The panel is three lines in `DocentApp`; this is the part
     /// that can be wrong.
+    /// The red button closes Docent rather than leaving it running with no window, which
+    /// reads as "it minimised itself".
+    @MainActor
+    private static func quits() -> [String] {
+        DocentAppDelegate().applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared)
+            ? []
+            : ["closing the last window would leave Docent running with nothing on screen"]
+    }
+
     /// Clicking a name in a page and coming back from it — the reason Back exists.
     @MainActor
     private static func history() -> [String] {

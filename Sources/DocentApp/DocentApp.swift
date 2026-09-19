@@ -2,8 +2,19 @@ import SwiftUI
 import AppKit
 import DocentKit
 
+/// Closing the window closes Docent.
+///
+/// Without this an app with no windows keeps running: the window disappears, the icon
+/// stays in the Dock, and clicking the red button looks like it minimised the app rather
+/// than quitting it. Docent is a reader with one window — when it is closed there is
+/// nothing left to be running.
+final class DocentAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+}
+
 @main
 struct DocentApp: App {
+    @NSApplicationDelegateAdaptor(DocentAppDelegate.self) private var appDelegate
     /// File ▸ Index Folder… — pick a folder of documentation and turn it into a docset
     /// without leaving the window.
     @MainActor
