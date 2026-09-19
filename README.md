@@ -12,8 +12,9 @@ them, in an app and in a command you can pipe.
 - **Search** every docset at once, exactly or loosely: `NSPast` finds `NSPasteboard`.
 - **Read** a symbol's page in the window, pictures and all, or print it as text with
   `docent show`.
-- **Index your own** documentation: point the app (⇧⌘I) or `docent index` at a repository
-  and its Markdown becomes searchable next to everything else.
+- **Index your own project**: point the app (⇧⌘I) or `docent browse` at a repository and
+  both halves of it become searchable — the Markdown *and* the code, every type, function,
+  method and property with the documentation comment written above it.
 - **Read comfortably.** Pages are painted to match the app — light or dark, your choice —
   and code blocks are syntax-highlighted even when the docset ships them plain.
 - **Keep it offline.** Docent never opens a network connection, and pages you read cannot
@@ -75,9 +76,8 @@ Docent reads docsets; it does not host or sell them. Three ways to get one:
 - **Download one** from the docset feeds those apps use, then add the archive:
   `docent add ~/Downloads/Python_3.tgz`.
 - **Index a folder you have**: `docent browse ~/code/myproject` (or `docent index`, or
-  ⇧⌘I in the app) walks it for Markdown and HTML, renders each file, indexes every heading,
-  and installs the result. Your own project's documentation then searches like any other
-  docset.
+  ⇧⌘I in the app) walks it for documentation and for code, and installs the result. Your
+  own project then searches like any other docset.
 - **Build one from generated docs** with [doc2dash](https://github.com/hynek/doc2dash),
   which turns Sphinx, MkDocs and similar output into a docset:
   `doc2dash -n MyLib docs/_build/html && docent add MyLib.docset`.
@@ -116,6 +116,21 @@ docent browse ~/code/myproject
 It indexes the project if it has not been indexed yet, opens Docent, and selects it with
 everything in it listed — so you can scroll the documentation without typing a search at
 all. Come back to it the same way any time; add `--replace` when the files have moved on.
+
+**Your code is indexed too**, which is most of what a repository is. Swift, Python, Go,
+Rust, JavaScript and TypeScript files become pages of their declarations: every type,
+function, method, property and enum case is an entry, carrying the documentation comment
+written above it and the line it is on.
+
+```sh
+docent find mine:Canvas.draw      # the method, wherever it lives
+docent show mine:Canvas           # its declaration and its doc comment
+docent find mine:clipboard        # a word that appears only inside a function body
+```
+
+That last one works because whole files are indexed as text as well: when nothing is
+*called* what you typed, Docent looks inside the pages and shows the ones that mention it,
+with the line it found. Use `--docs-only` if you want the Markdown and nothing else.
 
 In the app instead: **File ▸ Index Folder…** (⇧⌘I), pick a repository, and it appears in
 the sidebar when it is done. Choosing a folder that is already indexed offers to rebuild
@@ -183,8 +198,8 @@ docent find --help       # the same thing
 | `docent show <query>` | print a symbol's documentation as text; `--all`, `--index N` |
 | `docent path <query>` | print the file (and anchor) a symbol lives in |
 | `docent add <path>` | install a `.docset` folder or a `.tgz` archive; `--replace` |
-| `docent index <folder>` | make a docset from a folder of Markdown and HTML; `--name`, `--keyword`, `--out`, `--replace` |
-| `docent browse [folder]` | index the folder if needed, then open it in the window; `--name`, `--keyword`, `--replace` |
+| `docent index <folder>` | make a docset from a folder of documentation and code; `--name`, `--keyword`, `--out`, `--replace`, `--docs-only` |
+| `docent browse [folder]` | index the folder if needed, then open it in the window; `--name`, `--keyword`, `--replace`, `--docs-only` |
 
 ## What it touches
 
@@ -213,6 +228,10 @@ than followed.
   converting first (see [doc2dash](https://github.com/hynek/doc2dash)).
 - Pictures a page links to on the web are not downloaded, and a picture larger than 16 MB
   is left where it is.
+- Code is read by pattern, not compiled: Swift, Python, Go, Rust, JavaScript and TypeScript
+  are understood, other languages are indexed as text only, and an unusual declaration can
+  be missed. Nothing is resolved across files — Docent shows you where something is
+  declared, not everywhere it is used.
 - No docset catalogue or downloader: you bring the docsets.
 - `docent show` renders a page as plain text. Tables come out as rows, diagrams and images
   do not come out at all — read those in the window.

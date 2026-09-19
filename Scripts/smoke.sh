@@ -86,6 +86,15 @@ check "browsing again opens what is there" "already indexed"
 run "docent find proj:Setup"
 check "what browse indexed is searchable" "Setup"
 
+# A repository is mostly code, and that is what an indexed repository has to offer.
+run "printf '/// A pen.\\npublic struct Pen {\\n    /// Draws a line.\\n    public func draw() {}\\n}\\n' > $WORK/proj/Pen.swift"
+run "DOCENT_NO_LAUNCH=1 docent browse $WORK/proj --name Proj --keyword proj --replace"
+check "browse indexes the code too" "declarations"
+run "docent find proj:Pen.draw"
+check "a method in the code is an entry" "Method"
+run "docent show proj:Pen.draw"
+check "its documentation comment comes with it" "Draws a line"
+
 run "docent show Nothing-Like-This; echo exit=\$?"
 check "a miss explains itself" "nothing is called"
 check "a miss exits non-zero" "exit=1"

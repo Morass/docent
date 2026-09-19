@@ -345,6 +345,10 @@ enum SelfTest {
         defer { try? fm.removeItem(at: folder) }
         try? "# Sample\n\n## Kerning\n\nThe kerning table is fiddly.\n"
             .data(using: .utf8)!.write(to: folder.appendingPathComponent("README.md"))
+        // Code as well as prose: a repository indexed from the window has to offer its own
+        // declarations, which is the whole reason for pointing it at a repository.
+        try? "/// Sets the tracking.\npublic struct Kern {\n    public func tighten() {}\n}\n"
+            .data(using: .utf8)!.write(to: folder.appendingPathComponent("Kern.swift"))
 
         let browser = Browser()
         let before = browser.docsets.count
@@ -365,6 +369,11 @@ enum SelfTest {
         browser.query = "fiddly"
         browser.searchAndWait()
         check(!browser.results.isEmpty, "a word in the prose of the folder just indexed was not found")
+
+        browser.query = "Kern.tighten"
+        browser.searchAndWait()
+        check(browser.results.first?.entry.type == "Method",
+              "a method in the code just indexed was not offered: \(browser.results.first?.entry.type ?? "nothing")")
 
         // Indexing the same folder again must ask rather than silently rebuild.
         check(!browser.index(folder: folder, name: "Sample", keyword: "sample"),

@@ -172,17 +172,23 @@ let commandHelp: [String: String] = [
     docent index — make a docset out of a folder of documentation.
 
     USAGE
-      docent index <folder> [--name NAME] [--keyword WORD] [--out PATH] [--replace]
+      docent index <folder> [--name NAME] [--keyword WORD] [--out PATH] [--replace] [--docs-only]
 
     OPTIONS
       --name NAME      what to call it (default: the folder's name)
       --keyword WORD   the prefix to search it by, as in `mine:install`
       --out PATH       write the .docset here instead of installing it
       --replace        overwrite a docset of the same name already installed
+      --docs-only      index the Markdown and HTML only, and leave the code out
 
-    Walks the folder for Markdown and HTML, renders each file as a page, and indexes every
-    heading. Point it at a repository and its own documentation becomes searchable next to
-    everything else — `docent find`, `docent show`, and the app.
+    Walks the folder for documentation and for code. Markdown and HTML become pages with an
+    entry per heading; Swift, Python, Go, Rust, JavaScript and TypeScript files become pages
+    of their declarations — every type, function, method and property, with the documentation
+    comment written above it. Point it at a repository and both halves are searchable next to
+    everything else, in `docent find`, `docent show` and the app.
+
+    Whole files are searchable as text too, so a word that appears only inside a function
+    body still finds its way back to you.
 
     Folders that are never documentation (.git, node_modules, build folders and the like)
     are skipped, as are symlinks and files larger than 4 MB. Nothing in the folder is
@@ -197,12 +203,13 @@ let commandHelp: [String: String] = [
     docent browse — index a folder if needed and read it in the Docent window.
 
     USAGE
-      docent browse [folder] [--name NAME] [--keyword WORD] [--replace]
+      docent browse [folder] [--name NAME] [--keyword WORD] [--replace] [--docs-only]
 
     OPTIONS
       --name NAME      what to call it (default: the folder's name)
       --keyword WORD   the prefix to search it by, as in `mine:install`
       --replace        rebuild it from the folder as it is now
+      --docs-only      index the Markdown and HTML only, and leave the code out
 
     The one command for "let me read this project's documentation": it makes a docset out
     of the folder if there is not one already, opens Docent, and shows that docset with
@@ -242,8 +249,8 @@ struct Arguments {
         "show": ["docset", "index", "all", "text"],
         "path": ["docset", "index", "text"],
         "add": ["replace"],
-        "index": ["name", "keyword", "out", "replace"],
-        "browse": ["name", "keyword", "replace"],
+        "index": ["name", "keyword", "out", "replace", "docs-only"],
+        "browse": ["name", "keyword", "replace", "docs-only"],
         "help": [],
     ]
 
@@ -644,7 +651,8 @@ func runIndex(_ arguments: Arguments) throws {
 
     let name = arguments.options["name"] ?? source.lastPathComponent
     let keyword = arguments.options["keyword"] ?? Markdown.slug(name).nonEmpty
-    let indexer = Indexer(source: source, name: name, keyword: keyword)
+    let indexer = Indexer(source: source, name: name, keyword: keyword,
+                          includeCode: !arguments.flags.contains("docs-only"))
 
     let installing = arguments.options["out"] == nil
     let destination: URL
@@ -669,6 +677,7 @@ func runIndex(_ arguments: Arguments) throws {
     var line = "indexed \(bold(safe(name)))"
     if let keyword { line += " (\(safe(keyword)):)" }
     line += " — \(report.files) file\(report.files == 1 ? "" : "s"), \(report.entries) entries"
+    if report.symbols > 0 { line += ", \(report.symbols) declarations" }
     if report.pictures > 0 { line += ", \(report.pictures) picture\(report.pictures == 1 ? "" : "s")" }
     if report.skipped > 0 { line += dim(", \(report.skipped) skipped") }
     print(out: line)
@@ -752,7 +761,8 @@ func runBrowse(_ arguments: Arguments) throws {
             print(out: "\(bold(safe(name))) is already indexed — opening it.")
             print(out: dim("  rebuild it from the folder as it is now: docent browse \(folder) --replace"))
         } else {
-            let indexer = Indexer(source: source, name: name, keyword: keyword)
+            let indexer = Indexer(source: source, name: name, keyword: keyword,
+                                  includeCode: !arguments.flags.contains("docs-only"))
             let report: Indexer.Report
             do {
                 report = try indexer.build(into: destination)
@@ -763,6 +773,7 @@ func runBrowse(_ arguments: Arguments) throws {
             line += bold(safe(name))
             if let keyword { line += " (\(safe(keyword)):)" }
             line += " — \(report.files) file\(report.files == 1 ? "" : "s"), \(report.entries) entries"
+            if report.symbols > 0 { line += ", \(report.symbols) declarations" }
             if report.pictures > 0 { line += ", \(report.pictures) picture\(report.pictures == 1 ? "" : "s")" }
             if report.skipped > 0 { line += dim(", \(report.skipped) skipped") }
             print(out: line)

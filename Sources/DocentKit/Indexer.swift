@@ -14,6 +14,8 @@ public struct Indexer {
         public let entries: Int
         public let skipped: Int
         public let pictures: Int
+        /// Declarations found in source files.
+        public let symbols: Int
     }
 
     public enum Failure: Error, CustomStringConvertible {
@@ -37,6 +39,11 @@ public struct Indexer {
     ]
     public static let readExtensions: Set<String> = ["md", "markdown", "mdown", "html", "htm"]
 
+    /// Source files whose declarations become entries. A repository's documentation is
+    /// mostly its code: indexing only the Markdown gives you a list of README headings,
+    /// which is not what "index my project" means to anyone.
+    public static var codeExtensions: Set<String> { Set(SourceSymbols.Language.byExtension.keys) }
+
     /// Files bigger than this are skipped: a docs folder with a 50 MB generated HTML file in
     /// it should not turn one `index` into a hang.
     public static let maxFileBytes = 4 * 1024 * 1024
@@ -44,11 +51,15 @@ public struct Indexer {
     public let source: URL
     public let name: String
     public let keyword: String?
+    /// Whether source files are read for their declarations. On by default; `--docs-only`
+    /// turns it off for a folder that is documentation and nothing else.
+    public let includeCode: Bool
 
-    public init(source: URL, name: String, keyword: String? = nil) {
+    public init(source: URL, name: String, keyword: String? = nil, includeCode: Bool = true) {
         self.source = source
         self.name = name
         self.keyword = keyword
+        self.includeCode = includeCode
     }
 
     public func build(into destination: URL) throws -> Report {
@@ -78,6 +89,7 @@ public struct Indexer {
         var files = 0
         var skipped = 0
         var pictures: [String: String] = [:]      // source path -> path under Documents
+        var symbols = 0
         var contents: [(title: String, path: String)] = []
         /// Page text, for the full-text table: searching your own documentation by heading
         /// alone is not what anyone means by "search my docs".
@@ -119,6 +131,24 @@ public struct Indexer {
                 return rewritten
             }
 
+            if let language = includeCode ? SourceSymbols.Language.forExtension(file.pathExtension) : nil {
+                let found = SourceSymbols.symbols(in: text, language: language)
+                let page = SourcePage.render(symbols: found, path: relative, language: language)
+                try Data(page.html.utf8).write(to: target)
+                rows.append(IndexEntry(name: relative, type: "File", path: pagePath))
+                contents.append((relative, pagePath))
+                for entry in page.entries {
+                    rows.append(IndexEntry(name: entry.name, type: entry.kind,
+                                           path: "\(pagePath)#\(entry.anchor)"))
+                }
+                // The whole file goes in the text index: searching your own repository for a
+                // word that is only in the code is exactly what this is for.
+                bodies.append((relative, pagePath, text))
+                symbols += found.count
+                files += 1
+                continue
+            }
+
             if ["html", "htm"].contains(file.pathExtension.lowercased()) {
                 // The bytes are written as they are unless a picture reference had to move:
                 // rewriting means re-encoding, and a page that declares another charset is
@@ -158,7 +188,7 @@ public struct Indexer {
         try write(rows, to: index)
         try writeFullText(bodies, to: index)
         return Report(docset: bundle, files: files, entries: rows.count, skipped: skipped,
-                      pictures: pictures.count)
+                      pictures: pictures.count, symbols: symbols)
     }
 
     /// Every documentation file under the source folder, sorted, with noise folders and
@@ -180,8 +210,10 @@ public struct Indexer {
                 if Indexer.ignoredFolders.contains(url.lastPathComponent) { walker.skipDescendants() }
                 continue
             }
+            let ext = url.pathExtension.lowercased()
             guard values?.isRegularFile == true,
-                  Indexer.readExtensions.contains(url.pathExtension.lowercased()) else { continue }
+                  Indexer.readExtensions.contains(ext)
+                    || (includeCode && Indexer.codeExtensions.contains(ext)) else { continue }
             found.append(url)
         }
         return found.sorted { $0.path < $1.path }
@@ -208,6 +240,11 @@ public struct Indexer {
         var path = components.joined(separator: "/")
         for suffix in [".md", ".markdown", ".mdown"] where path.lowercased().hasSuffix(suffix) {
             path = String(path.dropLast(suffix.count)) + ".html"
+        }
+        // A source file becomes a page of its own: `Canvas.swift` → `Canvas.swift.html`, so
+        // two files that differ only by extension cannot collide.
+        if !path.lowercased().hasSuffix(".html") && !path.lowercased().hasSuffix(".htm") {
+            path += ".html"
         }
         return path
     }
