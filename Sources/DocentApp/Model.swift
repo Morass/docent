@@ -266,6 +266,19 @@ final class Browser: ObservableObject {
         }
     }
 
+    /// The tree row for whatever is being read, so the navigator can follow along.
+    var selectedTreeRowID: String? {
+        guard let match = selectedMatch else { return nil }
+        func walk(_ nodes: [DocTree.Node]) -> String? {
+            for node in nodes {
+                if node.entry?.path == match.entry.path { return node.id }
+                if let found = walk(node.children) { return found }
+            }
+            return nil
+        }
+        return walk(tree)
+    }
+
     func isSelected(_ node: DocTree.Node) -> Bool {
         guard let entry = node.entry, let docset = currentDocset else { return false }
         return selection == Match(docset: docset, entry: entry, score: 0).id
@@ -281,6 +294,27 @@ final class Browser: ObservableObject {
         }
         return walk(tree, parent: nil)
     }
+
+    /// Follows a link inside a page: the window moves with it, so Back comes back here.
+    /// Returns false when the target is not part of any docset, and the caller lets the
+    /// web view deal with it.
+    @discardableResult
+    func followLink(to url: URL, anchor: String?) -> Bool {
+        guard let match = service.match(forFile: url, anchor: anchor, in: docsets) else { return false }
+        if !results.contains(where: { $0.id == match.id }) { results.insert(match, at: 0) }
+        selection = match.id
+        return true
+    }
+
+    /// Where the reader had scrolled to on a page, kept per page so going back returns to
+    /// the paragraph they left rather than to the top of it.
+    private var scrollOffsets: [String: Double] = [:]
+
+    func rememberScroll(_ offset: Double, for id: Match.ID) {
+        scrollOffsets[id] = offset
+    }
+
+    func rememberedScroll(for id: Match.ID) -> Double? { scrollOffsets[id] }
 
     /// Opens the page a tree row stands for, through the same selection the list uses.
     func select(_ node: DocTree.Node) {

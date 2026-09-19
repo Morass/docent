@@ -41,6 +41,13 @@ struct PageView: NSViewRepresentable {
     let location: (url: URL, anchor: String?)?
     let documentsRoot: URL?
     let theme: ReadingTheme
+    /// Which page this is, so where the reader scrolled to can be remembered against it.
+    var pageID: String = ""
+    /// A link inside the page was clicked. Returning true means the window took it over.
+    var follow: (URL, String?) -> Bool = { _, _ in false }
+    /// Where the reader had got to, and where to put that back.
+    var rememberScroll: (String, Double) -> Void = { _, _ in }
+    var rememberedScroll: (String) -> Double? = { _ in nil }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -91,6 +98,15 @@ struct PageView: NSViewRepresentable {
             target = components.url ?? location.url
         }
         context.coordinator.root = documentsRoot
+        context.coordinator.follow = follow
+
+        // Leaving a page: keep the reader's place on it first.
+        if context.coordinator.pageID != pageID {
+            context.coordinator.saveScroll(view)
+            context.coordinator.pageID = pageID
+            context.coordinator.rememberScroll = rememberScroll
+            context.coordinator.restoreTo = rememberedScroll(pageID)
+        }
         // Same page, different symbol: scroll rather than reload, so moving down a list of
         // methods on one class does not flash the page each time.
         if let loaded = context.coordinator.loaded,
@@ -112,6 +128,22 @@ struct PageView: NSViewRepresentable {
         var anchor: String?
         var blocked = false
         var theme: ReadingTheme = .light
+        var follow: (URL, String?) -> Bool = { _, _ in false }
+        var pageID: String = ""
+        var rememberScroll: (String, Double) -> Void = { _, _ in }
+        /// How far down this page the reader was when they last left it.
+        var restoreTo: Double?
+
+        /// Reads the scroll position out of the web view and hands it to the model. The
+        /// read is asynchronous, so it is started before the page changes, not after.
+        func saveScroll(_ webView: WKWebView) {
+            let id = pageID
+            let remember = rememberScroll
+            guard !id.isEmpty else { return }
+            webView.evaluateJavaScript("window.pageYOffset") { value, _ in
+                if let offset = (value as? NSNumber)?.doubleValue { remember(id, offset) }
+            }
+        }
 
         /// Paint and colour the page: the theme's stylesheet first, then the highlighter for
         /// code blocks the docset left plain.
@@ -133,7 +165,14 @@ struct PageView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             applyTheme(to: webView)
-            scroll(webView, to: anchor)
+            // Coming back to a page the reader has already read: put them where they were.
+            // An anchor beats a remembered offset — they asked for that symbol by name.
+            if anchor == nil, let offset = restoreTo, offset > 0 {
+                webView.evaluateJavaScript("window.scrollTo(0, \(offset))", completionHandler: nil)
+            } else {
+                scroll(webView, to: anchor)
+            }
+            restoreTo = nil
         }
 
         func webView(
@@ -144,8 +183,14 @@ struct PageView: NSViewRepresentable {
             guard let url = navigationAction.request.url else { return decisionHandler(.cancel) }
 
             if url.isFileURL {
-                guard let root else { return decisionHandler(.cancel) }
-                decisionHandler(Containment.allows(url, under: root) ? .allow : .cancel)
+                guard let root, Containment.allows(url, under: root) else { return decisionHandler(.cancel) }
+                // A click on a link is a move: hand it to the window so the tree, the page
+                // and the history all agree, and Back returns to where the click happened.
+                if navigationAction.navigationType == .linkActivated {
+                    saveScroll(webView)
+                    if follow(url.deletingFragment, url.fragment) { return decisionHandler(.cancel) }
+                }
+                decisionHandler(.allow)
                 return
             }
 

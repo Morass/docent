@@ -98,6 +98,31 @@ public struct SearchService: Sendable {
         }
     }
 
+    /// What a link inside a page points at, as something the window can select.
+    ///
+    /// Following a link has to move the whole window — the tree row, the history, the page
+    /// — not just the web view, or "back" has nothing to go back to.
+    public func match(forFile url: URL, anchor: String?, in docsets: [Docset]? = nil) -> Match? {
+        let pool = docsets ?? library.docsets()
+        let target = url.resolvingSymlinksInPath().standardizedFileURL.path
+        for docset in pool {
+            let root = docset.readAccessURL.path
+            guard target.hasPrefix(root + "/") else { continue }
+            let relative = String(target.dropFirst(root.count + 1))
+            let entry = (try? SearchIndex(url: docset.indexURL))
+                .flatMap { try? $0.entry(atPath: relative, anchor: anchor) }
+            // A page with no entry of its own is still a page: make one, so a link into a
+            // corner of a docset nobody indexed by name still opens and still goes in the
+            // history.
+            let resolved = entry ?? IndexEntry(
+                name: (relative as NSString).lastPathComponent,
+                type: "Page",
+                path: anchor.map { "\(relative)#\($0)" } ?? relative)
+            return Match(docset: docset, entry: resolved, score: 0)
+        }
+        return nil
+    }
+
     /// Pages whose *text* mentions the query, for docsets Docent indexed itself.
     ///
     /// A docset from a vendor indexes symbols, and searching its prose is not something its

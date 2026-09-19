@@ -204,14 +204,22 @@ struct BrowserWindow: View {
     /// The project as a navigator: folders, the files in them, and what each file
     /// declares. Rows open and close like a file tree, and a row opens its page.
     private var tree: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(browser.tree) { node in
-                    TreeRow(node: node, depth: 0, browser: browser)
+        ScrollViewReader { scroller in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(browser.tree) { node in
+                        TreeRow(node: node, depth: 0, browser: browser)
+                    }
                 }
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.vertical, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // Going back lands on a row that may be off screen; bring it into view, the way
+            // a navigator follows the document you are looking at.
+            .onChange(of: browser.selection) { _, _ in
+                guard let id = browser.selectedTreeRowID else { return }
+                withAnimation(.easeOut(duration: 0.15)) { scroller.scrollTo(id, anchor: .center) }
+            }
         }
     }
 
@@ -246,14 +254,51 @@ struct BrowserWindow: View {
         }
     }
 
+    /// Back, forward, and what you are reading. A link in a page moves the whole window,
+    /// so Back is the way home from a name you clicked to find out what it was.
+    private func pageBar(for match: Match) -> some View {
+        HStack(spacing: 8) {
+            Button { browser.goBack() } label: {
+                Image(systemName: "chevron.left").frame(width: 14)
+            }
+            .disabled(!browser.canGoBack)
+            .help("Back (⌘[)")
+
+            Button { browser.goForward() } label: {
+                Image(systemName: "chevron.right").frame(width: 14)
+            }
+            .disabled(!browser.canGoForward)
+            .help("Forward (⌘])")
+
+            Text(match.entry.name)
+                .font(.callout).fontWeight(.medium)
+                .lineLimit(1).truncationMode(.middle)
+            Text(match.entry.type)
+                .font(.caption)
+                .foregroundStyle(Color.primary.opacity(0.65))
+            Spacer(minLength: 0)
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
     private var page: some View {
         Group {
             if let match = browser.selectedMatch, let location = browser.location(of: match) {
-                PageView(location: location,
-                         documentsRoot: match.docset.readAccessURL,
-                         theme: browser.pageAppearance.theme(systemIsDark: colorScheme == .dark))
-                    .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
-                    .navigationTitle("\(match.entry.name) — \(match.docset.name)")
+                VStack(spacing: 0) {
+                    pageBar(for: match)
+                    Divider()
+                    PageView(location: location,
+                             documentsRoot: match.docset.readAccessURL,
+                             theme: browser.pageAppearance.theme(systemIsDark: colorScheme == .dark),
+                             pageID: match.id,
+                             follow: { url, anchor in browser.followLink(to: url, anchor: anchor) },
+                             rememberScroll: { browser.rememberScroll($1, for: $0) },
+                             rememberedScroll: { browser.rememberedScroll(for: $0) })
+                }
+                .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                .navigationTitle("\(match.entry.name) — \(match.docset.name)")
             } else {
                 ContentUnavailableView(
                     "Nothing selected",
@@ -317,6 +362,7 @@ private struct TreeRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(isSelected ? Color.accentColor.opacity(0.25) : Color.clear)
                 .contentShape(Rectangle())
+                .id(node.id)
             }
             .buttonStyle(.plain)
 

@@ -205,6 +205,35 @@ public final class SearchIndex {
         return rows
     }
 
+    /// The entry for a page, for following a link inside one: the page's own entry if it
+    /// has one, otherwise the first symbol on it, so a click always lands on something the
+    /// rest of the window can select.
+    public func entry(atPath path: String, anchor: String? = nil) throws -> IndexEntry? {
+        budget.ticks = 0
+        let wanted = anchor.map { "\(path)#\($0)" }
+        let sql = selectSQL + " WHERE path = ? OR path = ? OR path LIKE ? LIMIT 200"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SearchIndexError.query(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(statement, 1, wanted ?? path, -1, transient)
+        sqlite3_bind_text(statement, 2, path, -1, transient)
+        sqlite3_bind_text(statement, 3, path + "#%", -1, transient)
+
+        var rows: [IndexEntry] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let name = sqlite3_column_text(statement, 0),
+                  let found = sqlite3_column_text(statement, 2) else { continue }
+            let type = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
+            rows.append(IndexEntry(name: String(cString: name), type: type, path: String(cString: found)))
+        }
+        if let wanted, let exact = rows.first(where: { $0.path == wanted }) { return exact }
+        if anchor == nil, let page = rows.first(where: { $0.path == path }) { return page }
+        return rows.first { $0.path == path } ?? rows.first
+    }
+
     /// How many symbols the docset indexes. Counted by SQLite: building a million rows in
     /// memory to take `.count` of them is the same answer and a hundred times the work.
     public func symbolCount() throws -> Int {

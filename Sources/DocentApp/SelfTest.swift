@@ -23,6 +23,7 @@ enum SelfTest {
         case "openrequest": failures = MainActor.assumeIsolated { openRequestFromTheTerminal() }
         case "pictures": failures = MainActor.assumeIsolated { pictures() }
         case "tree": failures = MainActor.assumeIsolated { tree() }
+        case "history": failures = MainActor.assumeIsolated { history() }
         default:
             FileHandle.standardError.write(Data("selftest: no mode called \"\(mode)\"\n".utf8))
             exit(2)
@@ -225,7 +226,69 @@ enum SelfTest {
     /// The menu item's whole job, minus the file panel: index a folder, install it, reload
     /// the library and select it. The panel is three lines in `DocentApp`; this is the part
     /// that can be wrong.
-    /// The navigator: the project laid out as folders, files and declarations, walked with
+    /// Clicking a name in a page and coming back from it — the reason Back exists.
+    @MainActor
+    private static func history() -> [String] {
+        var failures: [String] = []
+        func check(_ condition: Bool, _ message: String) { if !condition { failures.append(message) } }
+
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("docent-history-\(UUID().uuidString)", isDirectory: true)
+        try? fm.createDirectory(at: folder.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: folder) }
+        try? "/// Somewhere to draw.\npublic struct Canvas {\n    public func draw() {}\n}\n"
+            .data(using: .utf8)!.write(to: folder.appendingPathComponent("Sources/Canvas.swift"))
+        // Pen's documentation names Canvas, which is what the reader clicks.
+        try? "/// Draws onto a Canvas.\npublic struct Pen {}\n"
+            .data(using: .utf8)!.write(to: folder.appendingPathComponent("Sources/Pen.swift"))
+
+        let browser = Browser()
+        guard browser.index(folder: folder, name: "History", keyword: "history") else {
+            return ["indexing was refused"]
+        }
+        let deadline = Date().addingTimeInterval(20)
+        while browser.indexing, Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+
+        browser.query = "Pen"
+        browser.searchAndWait()
+        guard let pen = browser.selectedMatch else { return failures + ["Pen was not found after indexing"] }
+        check(!browser.canGoBack, "there is history before anything was read")
+
+        // Where the link in Pen's page points, followed the way a click follows it.
+        guard let location = browser.location(of: pen) else {
+            return failures + ["Pen's page does not resolve to a file"]
+        }
+        let canvasPage = location.url.deletingLastPathComponent().appendingPathComponent("Canvas.swift.html")
+        check(browser.followLink(to: canvasPage, anchor: "canvas"),
+              "a link to another page in the same docset was not followed")
+        check(browser.selectedMatch?.entry.name == "Canvas",
+              "following the link did not open Canvas: \(browser.selectedMatch?.entry.name ?? "nothing")")
+        check(browser.canGoBack, "after following a link there is nowhere to go back to")
+
+        browser.goBack()
+        check(browser.selectedMatch?.id == pen.id,
+              "Back did not return to the page the link was clicked on: \(browser.selectedMatch?.entry.name ?? "nothing")")
+        check(browser.canGoForward, "Forward is not offered after going back")
+        browser.goForward()
+        check(browser.selectedMatch?.entry.name == "Canvas", "Forward did not return to Canvas")
+
+        // Where the reader was on a page comes back with them.
+        browser.rememberScroll(742, for: pen.id)
+        check(browser.rememberedScroll(for: pen.id) == 742, "the reading position was not kept")
+        check(browser.rememberedScroll(for: "nothing") == nil, "a page nobody read has a position")
+
+        // A link out of the docset is not the window's to follow.
+        check(!browser.followLink(to: URL(fileURLWithPath: "/etc/hosts"), anchor: nil),
+              "a file outside every docset was treated as a page")
+
+        try? fm.removeItem(at: DocsetLibrary.standard().installDirectory
+            .appendingPathComponent(Indexer.folderName(for: "History")))
+        return failures
+    }
+
+    /// The navigator: the project laid out as folders    /// The navigator: the project laid out as folders, files and declarations, walked with
     /// the keyboard the way a file tree is walked.
     @MainActor
     private static func tree() -> [String] {
