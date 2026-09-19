@@ -115,3 +115,19 @@ extension ReadingThemeTests {
         }
     }
 }
+
+extension ReadingThemeTests {
+    /// The typography is CSS, not Swift: a `///` comment inside that string is not a
+    /// comment, it is a parse error that drops the first rule and leaves the page in the
+    /// browser's default serif at full width.
+    func testTheTypographyIsCSSAndNotSwift() {
+        XCTAssertFalse(Markdown.typography.contains("///"), Markdown.typography)
+        for line in Markdown.typography.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("/") else { continue }
+            XCTAssertTrue(trimmed.hasPrefix("/*") || trimmed.hasPrefix("*"),
+                          "not a CSS comment: \(trimmed)")
+        }
+        XCTAssertTrue(Markdown.typography.contains("-apple-system"), "the body font is gone")
+    }
+}

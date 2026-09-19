@@ -40,6 +40,10 @@ enum Screenshot {
             waitForPage {
                 snapshotWebView {
                     capture(to: URL(fileURLWithPath: path))
+                    if blank {
+                        note("refusing to call that a screenshot")
+                        exit(3)
+                    }
                     NSApp.terminate(nil)
                 }
             }
@@ -54,7 +58,12 @@ enum Screenshot {
               let webView = findWebView(in: root), attempt < 60 else {
             // Out of patience: say so, so a blank picture is a loud failure and not a
             // README image nobody looked at.
-            if attempt >= 60 { note("the page never drew anything — the picture will be blank") }
+            if attempt >= 60 {
+                // A blank picture is a failure, not a picture: the README carried one for a
+                // day because the harness wrote it without complaining.
+                note("the page never drew anything")
+                blank = true
+            }
             return DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: done)
         }
         webView.evaluateJavaScript("document.readyState === 'complete' && document.body.innerText.length > 40") { value, _ in
@@ -114,12 +123,21 @@ enum Screenshot {
         // A WKWebView draws in another process, so the window's layer tree has a hole where
         // the page should be. Ask the web view for its own snapshot and paste it in.
         if let image = webSnapshot, let webView = findWebView(in: root) {
-            let frame = webView.convert(webView.bounds, to: root)
+            // The bitmap context has its origin at the bottom left. A view tree may not:
+            // when the root is flipped, the rect has to be turned over or the page is
+            // painted off the top of the picture and the picture comes out blank.
+            var frame = webView.convert(webView.bounds, to: root)
+            if root.isFlipped {
+                frame.origin.y = root.bounds.height - frame.maxY
+            }
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = context
             context.cgContext.scaleBy(x: scale, y: scale)
             image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
             NSGraphicsContext.restoreGraphicsState()
+            note("page drawn at \(Int(frame.origin.x)),\(Int(frame.origin.y)) \(Int(frame.width))×\(Int(frame.height)) of \(Int(size.width))×\(Int(size.height)) (flipped: \(root.isFlipped))")
+        } else {
+            note("no page snapshot to composite")
         }
 
         guard let data = rep.representation(using: .png, properties: [:]) else { return note("no png") }
@@ -132,8 +150,30 @@ enum Screenshot {
     }
 
     private static var webSnapshot: NSImage?
+    /// Set when the page never drew; the harness exits non-zero so the picture is not used.
+    private static var blank = false
 
-    private static func snapshotWebView(then done: @escaping () -> Void) {
+    /// Every pixel the same colour: the web view handed back a sheet of white instead of
+    /// the page. It happens when the snapshot is taken before the view has been drawn, and
+    /// it is the reason a blank picture sat in the README for a day.
+    static func isBlank(_ image: NSImage) -> Bool {
+        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+              rep.pixelsWide > 8, rep.pixelsHigh > 8 else { return true }
+        let first = rep.colorAt(x: 4, y: 4)
+        for x in stride(from: 4, to: rep.pixelsWide - 4, by: max(1, rep.pixelsWide / 24)) {
+            for y in stride(from: 4, to: rep.pixelsHigh - 4, by: max(1, rep.pixelsHigh / 24)) {
+                guard let colour = rep.colorAt(x: x, y: y), let first else { continue }
+                if abs(colour.redComponent - first.redComponent) > 0.02
+                    || abs(colour.greenComponent - first.greenComponent) > 0.02
+                    || abs(colour.blueComponent - first.blueComponent) > 0.02 {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    private static func snapshotWebView(attempt: Int = 0, then done: @escaping () -> Void) {
         guard let window = mainWindow(),
               let root = window.contentView?.superview ?? window.contentView,
               let webView = findWebView(in: root) else { return done() }
@@ -142,6 +182,14 @@ enum Screenshot {
         webView.takeSnapshot(with: configuration) { image, error in
             if let error { note("web snapshot failed: \(error)") }
             if image == nil { note("web snapshot came back empty") }
+            // One flat colour is not a page. Ask again rather than writing it out.
+            if let image, isBlank(image), attempt < 8 {
+                note("the page came back blank; asking again (\(attempt + 1))")
+                return DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    snapshotWebView(attempt: attempt + 1, then: done)
+                }
+            }
+            if let image, isBlank(image) { blank = true }
             webSnapshot = image
             if let image, let debug = ProcessInfo.processInfo.environment["DOCENT_SCREENSHOT_WEB"] {
                 if let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),

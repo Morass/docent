@@ -556,8 +556,31 @@ enum SelfTest {
               let location = try? service.location(of: match) else {
             return ["no docsets to paint — set DOCENT_DOCSETS"]
         }
+        // A page Docent generated as well as one from a vendor's docset: the reading
+        // stylesheet is injected into both, but only a generated page carries Docent's own
+        // typography, and a broken stylesheet there is invisible on a vendor page.
+        let generated = (try? service.find("Kerning", limit: 1))?.first
+            .flatMap { found in (try? service.location(of: found)).map { (found, $0) } }
+        if generated == nil {
+            failures.append("no page of Docent's own to check the typography on")
+        }
 
-        for reading in [ReadingTheme.light, .dark] {
+        // The vendor page is where colour and highlighting are measured; the generated one
+        // is where Docent's own typography is. Expecting highlighted code on a page of
+        // prose would fail for the wrong reason.
+        var pages: [(reading: ReadingTheme, match: Match, location: (url: URL, anchor: String?), isOwn: Bool)] = [
+            (.light, match, location, false),
+            (.dark, match, location, false),
+        ]
+        if let generated {
+            pages.append((.light, generated.0, generated.1, true))
+            pages.append((.dark, generated.0, generated.1, true))
+        }
+
+        for page in pages {
+            let reading = page.reading
+            let match = page.match
+            let location = page.location
             let configuration = WKWebViewConfiguration()
             configuration.defaultWebpagePreferences.allowsContentJavaScript = false
             let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
@@ -588,17 +611,27 @@ enum SelfTest {
               if(a===null||b===null) return '0|0';
               var ratio=(Math.max(a,b)+0.05)/(Math.min(a,b)+0.05);
               var tokens=document.querySelectorAll('.docent-kw,.docent-str,.docent-com,.docent-num,.docent-type').length;
-              return ratio.toFixed(2)+'|'+tokens;})()
+              // The stylesheet either applied or it did not: a page in the browser's
+              // default serif at full width is what a broken one looks like.
+              var serif=/times|serif/i.test(s.fontFamily) && !/sans-serif/i.test(s.fontFamily);
+              return ratio.toFixed(2)+'|'+tokens+'|'+(serif?'serif':'ok')+'|'+s.maxWidth;})()
             """
             let answer = evaluate(measure, in: webView) as? String ?? "0|0"
             let parts = answer.split(separator: "|")
             let ratio = Double(parts.first ?? "0") ?? 0
-            let tokens = Int(parts.last ?? "0") ?? 0
-
+            let tokens = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
             if ratio < 7 {
                 failures.append("\(reading): the page ends up at \(ratio):1 contrast — the trial called that unreadable")
             }
-            if tokens == 0 {
+            if page.isOwn {
+                // Docent wrote this page, so its own stylesheet has to be in force.
+                if parts.count > 2, parts[2] == "serif" {
+                    failures.append("\(reading): a page Docent generated is in the browser's default serif — the typography did not parse")
+                }
+                if parts.count > 3, parts[3] == "none" {
+                    failures.append("\(reading): a page Docent generated has no measure — the typography did not parse")
+                }
+            } else if tokens == 0 {
                 failures.append("\(reading): no code was highlighted on a page that has a code block")
             }
         }

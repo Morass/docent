@@ -150,8 +150,10 @@ public enum Markdown {
     /// generated page renders in the browser's default serif at full window width, which is
     /// unreadable next to a real docset.
     public static let typography = """
+    /* Left-aligned rather than centred: a reading column centred in a wide window leaves a
+       hand's width of empty either side of the text and reads as a broken layout. */
     body { font: 15.5px/1.65 -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, Arial, sans-serif;
-           margin: 0 auto; padding: 28px 34px 64px; max-width: 46rem; }
+           margin: 0; padding: 28px 34px 64px; max-width: 52rem; }
     h1 { font-size: 1.8rem; margin: 0 0 1rem; line-height: 1.2; }
     h2 { font-size: 1.3rem; margin: 2rem 0 .6rem; }
     h3 { font-size: 1.08rem; margin: 1.5rem 0 .4rem; }
