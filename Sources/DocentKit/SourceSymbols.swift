@@ -265,6 +265,10 @@ extension SourceSymbols {
             }
             if !matched, isMemberLevel, container?.isEnum == true, trimmed.hasPrefix("case ") {
                 for piece in trimmed.dropFirst(5).split(separator: ",") {
+                    // The cap belongs in every loop that appends, not only in the outer
+                    // one: `case c0,c1,…,c99999` on a single line is one line of input and
+                    // a hundred thousand symbols out.
+                    guard symbols.count < maxSymbols else { break }
                     let name = String(piece).trimmed.prefix { $0.isLetter || $0.isNumber || $0 == "_" }
                     guard !name.isEmpty else { continue }
                     symbols.append(Symbol(name: qualified(String(name)), kind: "Value",

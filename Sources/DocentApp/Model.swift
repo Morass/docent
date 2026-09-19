@@ -62,7 +62,8 @@ final class Browser: ObservableObject {
     func index(folder: URL, name: String? = nil, keyword: String? = nil, replace: Bool = false) -> Bool {
         let title = name ?? folder.lastPathComponent
         let word = keyword ?? Markdown.slug(title).nonEmpty
-        let destination = service.library.installDirectory.appendingPathComponent(Indexer.folderName(for: title))
+        let destination = service.library.prepareInstallDirectory()
+            .appendingPathComponent(Indexer.folderName(for: title))
 
         if FileManager.default.fileExists(atPath: destination.path), !replace {
             status = "“\(title)” is already indexed. Index it again to rebuild it."

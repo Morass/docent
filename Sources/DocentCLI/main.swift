@@ -522,6 +522,12 @@ func runAdd(_ arguments: Arguments) throws {
         try checkArchive(sourceURL)
         try fm.createDirectory(at: scratch, withIntermediateDirectories: true)
         try unpack(sourceURL, into: scratch)
+        // The listing can lie about sizes; the disk cannot. This is the check that counts.
+        let unpacked = TarListing.bytesOnDisk(scratch, stoppingAt: AddLimits.maxBytes)
+        if unpacked > AddLimits.maxBytes {
+            try? FileManager.default.removeItem(at: scratch)
+            throw CommandError("that archive unpacked to more than \(AddLimits.maxBytes / (1024 * 1024 * 1024)) GB — removed it again")
+        }
         guard let found = DocsetLibrary.docsetURLs(under: scratch).first else {
             throw CommandError("that archive holds no .docset folder")
         }
@@ -659,8 +665,7 @@ func runIndex(_ arguments: Arguments) throws {
     if let out = arguments.options["out"] {
         destination = URL(fileURLWithPath: expandTilde(out)).standardizedFileURL
     } else {
-        let library = DocsetLibrary.standard().installDirectory
-        try fm.createDirectory(at: library, withIntermediateDirectories: true)
+        let library = DocsetLibrary.standard().prepareInstallDirectory()
         destination = library.appendingPathComponent(Indexer.folderName(for: name))
         if fm.fileExists(atPath: destination.path), !arguments.flags.contains("replace") {
             throw CommandError("\(safe(name)) is already installed. Pass --replace to rebuild it.")
@@ -692,16 +697,27 @@ func runIndex(_ arguments: Arguments) throws {
 
 /// Where Docent.app is: beside this command (a checkout builds both into `build/`), then
 /// the two places an app is installed. Launch Services is asked only if none of them exist.
+/// Where this binary actually is, asked of the kernel rather than of `argv[0]`.
+///
+/// `argv[0]` is whatever the caller passed — usually the bare word `docent` — and resolving
+/// that as a path lands in the *current directory*. `docent browse .` in a repository that
+/// happened to contain a `Docent.app` would then launch that one.
+func executableDirectory() -> URL? {
+    var size = UInt32(4096)
+    var buffer = [CChar](repeating: 0, count: Int(size))
+    guard _NSGetExecutablePath(&buffer, &size) == 0 else { return nil }
+    let path = String(cString: buffer)
+    guard path.hasPrefix("/") else { return nil }
+    return URL(fileURLWithPath: path).resolvingSymlinksInPath().deletingLastPathComponent()
+}
+
 func docentAppURL() -> URL? {
     let fm = FileManager.default
-    let beside = URL(fileURLWithPath: CommandLine.arguments[0])
-        .resolvingSymlinksInPath()
-        .deletingLastPathComponent()
     let candidates = [
-        beside.appendingPathComponent("Docent.app"),
+        executableDirectory()?.appendingPathComponent("Docent.app"),
         URL(fileURLWithPath: "/Applications/Docent.app"),
         Home.directory().appendingPathComponent("Applications/Docent.app"),
-    ]
+    ].compactMap { $0 }
     return candidates.first { fm.fileExists(atPath: $0.path) }
 }
 
@@ -751,7 +767,7 @@ func runBrowse(_ arguments: Arguments) throws {
         let keyword = arguments.options["keyword"] ?? Markdown.slug(name).nonEmpty
         hint = keyword ?? name
 
-        try fm.createDirectory(at: library.installDirectory, withIntermediateDirectories: true)
+        library.prepareInstallDirectory()
         let destination = library.installDirectory.appendingPathComponent(Indexer.folderName(for: name))
         let already = fm.fileExists(atPath: destination.path)
 

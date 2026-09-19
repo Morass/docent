@@ -16,4 +16,24 @@ public enum Containment {
         let resolved = url.resolvingSymlinksInPath().standardizedFileURL.path
         return resolved == resolvedRoot || resolved.hasPrefix(resolvedRoot + "/")
     }
+
+    /// An ordinary file, and not a door into something else.
+    ///
+    /// A named pipe has no size and blocks whoever opens it until a writer turns up, so a
+    /// FIFO planted in a docset (as a page, as `Info.plist`, as the handoff file) hangs
+    /// Docent for ever while passing every size check. Devices and sockets are no better.
+    public static func isOrdinaryFile(_ url: URL) -> Bool {
+        guard url.isFileURL else { return false }
+        var status = stat()
+        guard lstat(url.path, &status) == 0 else { return false }
+        return (status.st_mode & S_IFMT) == S_IFREG
+    }
+
+    /// Reads a file that has to be an ordinary one, and no bigger than `limit`.
+    public static func read(_ url: URL, limit: Int) -> Data? {
+        guard isOrdinaryFile(url) else { return nil }
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil,
+              size <= limit else { return nil }
+        return try? Data(contentsOf: url, options: [.mappedIfSafe])
+    }
 }

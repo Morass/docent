@@ -288,7 +288,15 @@ public enum HTMLText {
 
     /// Reads `<tag …>` starting at `index`, respecting quoted attribute values so that a
     /// `>` inside an attribute does not end the tag early.
+    /// The longest a tag may be before it is treated as text. Without a bound, a page of
+    /// `"<a "` with no `>` anywhere makes every failed scan walk the rest of the page:
+    /// 100 000 of them is quadratic, under the size cap, and looks like a hang.
+    static let maxTagLength = 8192
+
     private static func readTag(_ html: String, from index: String.Index) -> Tag? {
+        // The bound is counted as the scan goes, never measured up front: walking 8 KB of
+        // string to find where to stop is itself the quadratic cost being avoided.
+        var budget = maxTagLength
         var cursor = html.index(after: index)
         guard cursor < html.endIndex else { return nil }
         var isClosing = false
@@ -310,20 +318,27 @@ public enum HTMLText {
         }
 
         var name = ""
-        while cursor < html.endIndex, html[cursor].isLetter || html[cursor].isNumber {
+        while cursor < html.endIndex, budget > 0, html[cursor].isLetter || html[cursor].isNumber {
             name.append(html[cursor])
             cursor = html.index(after: cursor)
+            budget -= 1
         }
         guard !name.isEmpty else { return nil }
 
         var quote: Character? = nil
         var selfClosing = false
-        while cursor < html.endIndex {
+        while cursor < html.endIndex, budget > 0 {
+            budget -= 1
             let character = html[cursor]
             if let open = quote {
                 if character == open { quote = nil }
             } else if character == "\"" || character == "'" {
                 quote = character
+            } else if character == "<" {
+                // An unquoted `<` inside a tag means the tag never closed: the first `<`
+                // was text. Stopping here is what keeps a page of `"<a "` linear instead of
+                // rescanning the rest of the page for every one of them.
+                return nil
             } else if character == ">" {
                 cursor = html.index(after: cursor)
                 return Tag(name: name.lowercased(), isClosing: isClosing, isSelfClosing: selfClosing, end: cursor)

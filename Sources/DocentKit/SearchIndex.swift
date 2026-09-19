@@ -149,7 +149,10 @@ public final class SearchIndex {
         var rows: [IndexEntry] = []
         var step = sqlite3_step(statement)
         while step == SQLITE_ROW {
-            if let name = sqlite3_column_text(statement, 0), let path = sqlite3_column_text(statement, 2) {
+            // A column is data too: a generated column of `hex(zeroblob(100000000))` is a
+            // valid index and a hundred megabytes per row. Rows that big are not symbols.
+            if SearchIndex.isReasonableRow(statement),
+               let name = sqlite3_column_text(statement, 0), let path = sqlite3_column_text(statement, 2) {
                 let type = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
                 rows.append(IndexEntry(name: String(cString: name), type: type, path: String(cString: path)))
             }
@@ -252,6 +255,17 @@ public final class SearchIndex {
             throw SearchIndexError.query("could not count the symbols in this docset")
         }
         return Int(sqlite3_column_int64(statement, 0))
+    }
+
+    /// The longest a name, type or path may be before the row is skipped.
+    public static let maxColumnBytes = 64 * 1024
+
+    /// Checks the three columns' sizes *before* SQLite is asked for their contents.
+    static func isReasonableRow(_ statement: OpaquePointer?) -> Bool {
+        for column in Int32(0)...2 where sqlite3_column_bytes(statement, column) > maxColumnBytes {
+            return false
+        }
+        return true
     }
 
     /// `%f%o%o%` — every character of the query, in order, anywhere in the name.

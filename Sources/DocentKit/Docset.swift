@@ -49,10 +49,22 @@ public struct Docset: Hashable, Sendable, Comparable {
 
         guard fm.fileExists(atPath: indexURL.path),
               fm.fileExists(atPath: documentsURL.path) else { return nil }
+
+        // Every part of the bundle has to be *inside* the bundle. A docset whose
+        // `Documents` is a symlink to `/etc` would otherwise set the read boundary to
+        // `/etc`, and an index row naming `hosts` would be served as documentation.
+        let root = url.resolvingSymlinksInPath().standardizedFileURL
+        for part in [plistURL, indexURL, documentsURL]
+        where !Containment.allows(part, under: root) { return nil }
+        guard Containment.isOrdinaryFile(plistURL), Containment.isOrdinaryFile(indexURL) else { return nil }
     }
 
+    /// A plist is a few hundred bytes; anything bigger is not one, and a named pipe is not
+    /// a file at all.
+    static let maxPlistBytes = 1 << 20
+
     private static func readPlist(_ url: URL) -> [String: Any] {
-        guard let data = try? Data(contentsOf: url),
+        guard let data = Containment.read(url, limit: maxPlistBytes),
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil),
               let dict = plist as? [String: Any] else { return [:] }
         return dict

@@ -22,12 +22,18 @@ public struct Indexer {
         case notAFolder(String)
         case empty(String)
         case cannotWrite(String)
+        case overlaps(String)
+        case inTheWay(String)
 
         public var description: String {
             switch self {
             case .notAFolder(let path): return "\(path) is not a folder"
             case .empty(let path): return "no Markdown or HTML files under \(path)"
             case .cannotWrite(let path): return "cannot write the docset at \(path)"
+            case .overlaps(let path):
+                return "\(path) is inside the folder being indexed — pick somewhere else"
+            case .inTheWay(let path):
+                return "\(path) already exists and is not a docset — Docent will not delete it"
             }
         }
     }
@@ -47,6 +53,10 @@ public struct Indexer {
     /// Files bigger than this are skipped: a docs folder with a 50 MB generated HTML file in
     /// it should not turn one `index` into a hang.
     public static let maxFileBytes = 4 * 1024 * 1024
+
+    /// How many files one docset may be built from. A folder with a million tiny Markdown
+    /// files is not documentation, and holding every page's plan in memory is not free.
+    public static let maxFiles = 20_000
 
     public let source: URL
     public let name: String
@@ -69,11 +79,31 @@ public struct Indexer {
             throw Failure.notAFolder(source.path)
         }
 
-        let bundle = destination
-        let resources = bundle.appendingPathComponent("Contents/Resources")
+        // What is already at the destination decides whether this is allowed to proceed.
+        // `--out ./my-project` used to delete the project: the destination was removed
+        // before anything was read, whatever it happened to be.
+        let bundle = destination.standardizedFileURL
+        let sourceRoot = source.resolvingSymlinksInPath().standardizedFileURL
+        let bundleResolved = bundle.resolvingSymlinksInPath().standardizedFileURL
+        if bundleResolved.path == sourceRoot.path
+            || bundleResolved.path.hasPrefix(sourceRoot.path + "/")
+            || sourceRoot.path.hasPrefix(bundleResolved.path + "/") {
+            throw Failure.overlaps(bundle.path)
+        }
+        if fm.fileExists(atPath: bundle.path) {
+            guard Indexer.looksLikeADocset(bundle) else { throw Failure.inTheWay(bundle.path) }
+        }
+
+        // Built beside the destination and moved into place, so a docset is either the old
+        // one or the new one and never half of either.
+        let staging = bundle.deletingLastPathComponent()
+            .appendingPathComponent(".docent-building-\(UUID().uuidString).docset")
+        let resources = staging.appendingPathComponent("Contents/Resources")
         let documents = resources.appendingPathComponent("Documents", isDirectory: true)
-        if fm.fileExists(atPath: bundle.path) { try fm.removeItem(at: bundle) }
-        try fm.createDirectory(at: documents, withIntermediateDirectories: true)
+        try fm.createDirectory(at: documents, withIntermediateDirectories: true,
+                               attributes: [.posixPermissions: 0o700])
+        // Whatever happens next, the half-built folder does not outlive this call.
+        defer { try? fm.removeItem(at: staging) }
 
         var info: [String: Any] = [
             "CFBundleName": name,
@@ -83,7 +113,7 @@ public struct Indexer {
         ]
         if let keyword { info["DocSetPlatformFamily"] = keyword }
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
-            .write(to: bundle.appendingPathComponent("Contents/Info.plist"))
+            .write(to: staging.appendingPathComponent("Contents/Info.plist"))
 
         // Both sides resolved, and compared as a prefix rather than by length: a source
         // under /var (which is /private/var) otherwise loses the first few characters of
@@ -254,6 +284,22 @@ public struct Indexer {
         let index = resources.appendingPathComponent("docSet.dsidx")
         try write(rows, to: index)
         try writeFullText(bodies, to: index)
+
+        // The swap: the old docset is only removed once the new one is complete.
+        if fm.fileExists(atPath: bundle.path) {
+            let retired = bundle.deletingLastPathComponent()
+                .appendingPathComponent(".docent-replaced-\(UUID().uuidString).docset")
+            try fm.moveItem(at: bundle, to: retired)
+            do {
+                try fm.moveItem(at: staging, to: bundle)
+            } catch {
+                try? fm.moveItem(at: retired, to: bundle)     // put the old one back
+                throw error
+            }
+            try? fm.removeItem(at: retired)
+        } else {
+            try fm.moveItem(at: staging, to: bundle)
+        }
         return Report(docset: bundle, files: files, entries: rows.count, skipped: skipped,
                       pictures: pictures.count, symbols: symbols)
     }
@@ -261,7 +307,7 @@ public struct Indexer {
     /// A file's text, whatever it claims to be encoded as. Latin-1 never fails, so a file
     /// Docent cannot read as UTF-8 is still indexed rather than skipped.
     static func text(of file: URL) -> String? {
-        guard let data = try? Data(contentsOf: file) else { return nil }
+        guard let data = Containment.read(file, limit: maxFileBytes) else { return nil }
         return String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
     }
 
@@ -289,8 +335,20 @@ public struct Indexer {
                   Indexer.readExtensions.contains(ext)
                     || (includeCode && Indexer.codeExtensions.contains(ext)) else { continue }
             found.append(url)
+            if found.count >= Indexer.maxFiles { break }
         }
         return found.sorted { $0.path < $1.path }
+    }
+
+    /// Does this folder hold what a docset holds? Used before replacing anything: Docent
+    /// deletes docsets it built, never whatever else happens to be at that path.
+    static func looksLikeADocset(_ url: URL) -> Bool {
+        let fm = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard url.pathExtension == "docset",
+              fm.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else { return false }
+        return fm.fileExists(atPath: url.appendingPathComponent("Contents/Info.plist").path)
+            || fm.fileExists(atPath: url.appendingPathComponent("Contents/Resources/docSet.dsidx").path)
     }
 
     /// The `.docset` folder a name installs as.

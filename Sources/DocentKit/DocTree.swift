@@ -33,8 +33,18 @@ public enum DocTree {
 
     /// The tree for a docset: its own structure when Docent indexed it, and a list by kind
     /// when it came from somewhere else and its paths mean nothing to a reader.
+    /// How deep a path may be before it is ignored. An index row is data: one row whose
+    /// path is `a/` repeated a hundred thousand times would otherwise build a hundred
+    /// thousand nested folders, copying arrays all the way down.
+    public static let maximumDepth = 32
+    public static let maximumPathLength = 1024
+
     public static func build(_ entries: [IndexEntry], indexPage: String = "index.html") -> [Node] {
         guard entries.count <= maximumEntries else { return [] }
+        let entries = entries.filter { entry in
+            entry.path.count <= maximumPathLength
+                && entry.path.split(separator: "/").count <= maximumDepth
+        }
         let hasStructure = entries.contains { $0.type == "File" }
         return hasStructure ? structure(entries, indexPage: indexPage) : byKind(entries)
     }

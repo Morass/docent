@@ -399,7 +399,9 @@ enum SelfTest {
         try? "# Sample\n\n![A screenshot](Resources/shot.png)\n"
             .data(using: .utf8)!.write(to: folder.appendingPathComponent("README.md"))
 
-        let docset = folder.appendingPathComponent("Sample.docset")
+        // Outside the folder being indexed: writing a docset into the source is refused.
+        let docset = fm.temporaryDirectory.appendingPathComponent("docent-pictures-out-\(UUID().uuidString).docset")
+        defer { try? fm.removeItem(at: docset) }
         guard let report = try? Indexer(source: folder, name: "Sample", keyword: "sample").build(into: docset) else {
             return ["the folder could not be indexed"]
         }

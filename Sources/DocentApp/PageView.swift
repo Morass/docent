@@ -216,7 +216,11 @@ struct PageView: NSViewRepresentable {
 
             // Anything off the disk — an analytics beacon, a CDN font, a link someone
             // clicked — leaves the reader. Docent itself never goes to the network.
-            if navigationAction.navigationType == .linkActivated {
+            //
+            // Only web links are handed to the rest of the machine: a docset is someone
+            // else's HTML, and `smb://`, `ftp://` or a third-party app's own scheme would
+            // otherwise be opened by whatever registered for it, on a click.
+            if navigationAction.navigationType == .linkActivated, NetworkBlock.opensOutside(url) {
                 NSWorkspace.shared.open(url)
             }
             decisionHandler(.cancel)

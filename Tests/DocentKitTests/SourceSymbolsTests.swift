@@ -228,7 +228,10 @@ final class IndexedCodeTests: XCTestCase {
     }
 
     private func index(includeCode: Bool = true) throws -> (Indexer.Report, SearchIndex) {
-        let out = root.appendingPathComponent("Out-\(includeCode).docset")
+        // Outside the folder being indexed: writing a docset into the source is refused.
+        let out = root.deletingLastPathComponent()
+            .appendingPathComponent("docent-out-\(UUID().uuidString)-\(includeCode).docset")
+        addTeardownBlock { try? FileManager.default.removeItem(at: out) }
         let report = try Indexer(source: root, name: "Project", keyword: "proj",
                                  includeCode: includeCode).build(into: out)
         return (report, try SearchIndex(url: out.appendingPathComponent("Contents/Resources/docSet.dsidx")))
@@ -287,7 +290,9 @@ extension IndexedCodeTests {
         public struct Pen {}
         """.write(to: root.appendingPathComponent("Sources/Pen.swift"), atomically: true, encoding: .utf8)
 
-        let out = root.appendingPathComponent("Linked.docset")
+        let out = root.deletingLastPathComponent()
+            .appendingPathComponent("docent-linked-\(UUID().uuidString).docset")
+        addTeardownBlock { try? FileManager.default.removeItem(at: out) }
         _ = try Indexer(source: root, name: "Project", keyword: "proj").build(into: out)
         let documents = out.appendingPathComponent("Contents/Resources/Documents")
         func page(_ path: String) throws -> String {

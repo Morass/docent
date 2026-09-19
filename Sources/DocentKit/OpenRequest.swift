@@ -39,16 +39,17 @@ public struct OpenRequest: Equatable, Sendable, Codable {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
         try JSONEncoder().encode(self).write(to: url, options: .atomic)
+        // Nobody else's business which project someone is reading.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     /// Read it and delete it. A request is acted on once, whatever happens next — a crash
     /// while opening a docset must not leave the app jumping to it on every launch.
     @discardableResult
     public static func consume(at url: URL = OpenRequest.url(), now: Date = Date()) -> OpenRequest? {
-        // A request is a couple of hundred bytes; anything larger is not one, and is not
-        // read into memory to find that out.
-        let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int) ?? 0
-        let data = size <= 64 * 1024 ? (try? Data(contentsOf: url)) : nil
+        // A request is a couple of hundred bytes; anything larger is not one. A named pipe
+        // is not one either, and opening one would block the window for ever.
+        let data = Containment.read(url, limit: 64 * 1024)
         try? FileManager.default.removeItem(at: url)
         guard let data, let request = try? JSONDecoder().decode(OpenRequest.self, from: data) else { return nil }
         return request.isFresh(now: now) ? request : nil

@@ -106,7 +106,9 @@ public struct SearchService: Sendable {
         let pool = docsets ?? library.docsets()
         let target = url.resolvingSymlinksInPath().standardizedFileURL.path
         for docset in pool {
-            let root = docset.readAccessURL.path
+            // Both sides resolved: a library folder that is itself a symlink otherwise
+            // fails the prefix check and every link inside a page stops working.
+            let root = docset.readAccessURL.resolvingSymlinksInPath().standardizedFileURL.path
             guard target.hasPrefix(root + "/") else { continue }
             let relative = String(target.dropFirst(root.count + 1))
             let entry = (try? SearchIndex(url: docset.indexURL))
@@ -200,7 +202,11 @@ public struct SearchService: Sendable {
         if let size, size > SearchService.pageSizeLimit {
             throw PageError.tooLarge(path: url.path, bytes: size)
         }
-        guard let data = try? Data(contentsOf: url) else { throw PageError.unreadable(url.path) }
+        // An ordinary file, not a named pipe with no writer: a FIFO reports no size at all
+        // and blocks whoever opens it.
+        guard let data = Containment.read(url, limit: SearchService.pageSizeLimit) else {
+            throw PageError.unreadable(url.path)
+        }
         let html = String(data: data, encoding: .utf8)
             ?? String(data: data, encoding: .isoLatin1)
             ?? ""

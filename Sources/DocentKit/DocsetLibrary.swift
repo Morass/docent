@@ -43,6 +43,16 @@ public struct DocsetLibrary: Sendable {
         searchPaths.first ?? Home.docsetsDirectory()
     }
 
+    /// Makes the install directory if it is not there, and keeps it to the user: an indexed
+    /// project's docset holds the full text of that project's files.
+    @discardableResult
+    public func prepareInstallDirectory() -> URL {
+        let url = installDirectory
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        return url
+    }
+
     /// Every docset found, sorted by name, one entry per identifier: the same docset
     /// installed in two of the folders above is listed once, the earlier path winning.
     public func docsets() -> [Docset] {

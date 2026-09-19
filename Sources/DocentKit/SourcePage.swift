@@ -22,14 +22,18 @@ public enum SourcePage {
     public static func entries(for symbols: [SourceSymbols.Symbol]) -> [Entry] {
         var entries: [Entry] = []
         var used = Set<String>()
+        // The next free suffix per name, so a file full of identical names does not turn
+        // anchor-making into quadratic work.
+        var counts: [String: Int] = [:]
         for symbol in symbols {
             let base = Markdown.slug(symbol.name).nonEmpty ?? "symbol"
             var anchor = base
-            var suffix = 2
+            var suffix = counts[base] ?? 2
             while !used.insert(anchor).inserted {
                 anchor = "\(base)-\(suffix)"
                 suffix += 1
             }
+            counts[base] = suffix
             entries.append(Entry(name: symbol.name, kind: symbol.kind, anchor: anchor))
         }
         return entries

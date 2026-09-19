@@ -39,3 +39,17 @@ public enum NetworkBlock {
         return "[" + rules.joined(separator: ",") + "]"
     }
 }
+
+extension NetworkBlock {
+    /// Which links Docent hands to the rest of the machine when someone clicks them.
+    ///
+    /// A docset is someone else's HTML. `https:` opens a browser; `smb:` mounts a share and
+    /// `someapp:` starts whatever registered for it, which is not what clicking a link in a
+    /// documentation reader should be able to do.
+    public static let browserSchemes: Set<String> = ["http", "https", "mailto"]
+
+    public static func opensOutside(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        return browserSchemes.contains(scheme)
+    }
+}

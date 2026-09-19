@@ -133,7 +133,9 @@ final class PageAssetsTests: XCTestCase {
         try "# Thing\n\n![A screenshot](Resources/shot.png)\n"
             .write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
 
-        let out = root.appendingPathComponent("Built.docset")
+        let out = root.deletingLastPathComponent()
+            .appendingPathComponent("docent-built-\(UUID().uuidString).docset")
+        addTeardownBlock { try? FileManager.default.removeItem(at: out) }
         let report = try Indexer(source: root, name: "Thing", keyword: "thing").build(into: out)
         XCTAssertEqual(report.pictures, 1)
 

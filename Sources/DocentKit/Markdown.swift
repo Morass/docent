@@ -23,6 +23,7 @@ public enum Markdown {
         var html = ""
         var headings: [Heading] = []
         var seenAnchors: Set<String> = []
+        var anchorCounts: [String: Int] = [:]
         var lines = source.components(separatedBy: .newlines)[...]
 
         var listKind: String? = nil          // "ul" or "ol", nil when not in a list
@@ -53,12 +54,17 @@ public enum Markdown {
 
             if let heading = atxHeading(trimmed) {
                 closeList()
-                var anchor = slug(heading.text)
-                var attempt = 2
+                // The next free suffix is remembered per heading, because starting at 2
+                // every time makes a page of identical headings quadratic: 100 000 of them
+                // is five billion attempts.
+                let base = slug(heading.text)
+                var anchor = base
+                var attempt = anchorCounts[base] ?? 2
                 while !seenAnchors.insert(anchor).inserted {
-                    anchor = slug(heading.text) + "-\(attempt)"
+                    anchor = base + "-\(attempt)"
                     attempt += 1
                 }
+                anchorCounts[base] = attempt
                 headings.append(Heading(level: heading.level, text: heading.text, anchor: anchor))
                 html += "<h\(heading.level) id=\"\(escape(anchor))\">\(inline(heading.text))</h\(heading.level)>\n"
                 continue
@@ -228,16 +234,22 @@ public enum Markdown {
         return out
     }
 
+    /// One forward pass, never restarting the search at the beginning of what is left.
+    ///
+    /// Searching a shrinking `Substring` from its start each time is quadratic: a line of
+    /// four megabytes of `*` is inside the file size cap and took minutes.
     private static func replacePairs(in text: String, marker: String, tag: String) -> String {
         var out = ""
-        var rest = Substring(text)
-        while let open = rest.range(of: marker),
-              let close = rest[open.upperBound...].range(of: marker) {
-            out += rest[..<open.lowerBound]
-            out += "<\(tag)>" + rest[open.upperBound..<close.lowerBound] + "</\(tag)>"
-            rest = rest[close.upperBound...]
+        var cursor = text.startIndex
+        var search = text.startIndex
+        while let open = text.range(of: marker, range: search..<text.endIndex),
+              let close = text.range(of: marker, range: open.upperBound..<text.endIndex) {
+            out += text[cursor..<open.lowerBound]
+            out += "<\(tag)>" + text[open.upperBound..<close.lowerBound] + "</\(tag)>"
+            cursor = close.upperBound
+            search = close.upperBound
         }
-        return out + rest
+        return out + text[cursor...]
     }
 
     /// `[text](target)` — only local and http(s) targets become links, and an http link in a
@@ -246,17 +258,23 @@ public enum Markdown {
     /// stray "!" and a dead link, and the page made no sense to read.
     private static func links(in text: String) -> String {
         var out = ""
-        var rest = Substring(text)
-        while let openBracket = rest.range(of: "["),
-              let closeBracket = rest[openBracket.upperBound...].range(of: "]("),
-              let closeParen = rest[closeBracket.upperBound...].range(of: ")") {
-            let label = rest[openBracket.upperBound..<closeBracket.lowerBound]
-            let target = String(rest[closeBracket.upperBound..<closeParen.lowerBound])
-            var before = rest[..<openBracket.lowerBound]
+        var cursor = text.startIndex
+        var search = text.startIndex
+        // As above: one pass with a moving search index, not a search from the start of
+        // the remainder — `[a](b)` repeated a million times is a four-megabyte file.
+        while let openBracket = text.range(of: "[", range: search..<text.endIndex),
+              let closeBracket = text.range(of: "](", range: openBracket.upperBound..<text.endIndex),
+              let closeParen = text.range(of: ")", range: closeBracket.upperBound..<text.endIndex) {
+            let label = text[openBracket.upperBound..<closeBracket.lowerBound]
+            let target = String(text[closeBracket.upperBound..<closeParen.lowerBound])
+            var before = text[cursor..<openBracket.lowerBound]
             let isImage = before.hasSuffix("!")
             if isImage { before = before.dropLast() }
             out += before
-            if target.contains("\"") || target.contains(" ") || target.lowercased().hasPrefix("javascript:") {
+            let lowered = target.lowercased()
+            let refusedSchemes = ["javascript:", "data:", "vbscript:", "file:"]
+            if target.contains("\"") || target.contains(" ")
+                || refusedSchemes.contains(where: { lowered.hasPrefix($0) }) {
                 out += "\(isImage ? "!" : "")[\(label)](\(escape(target)))"
             } else if isImage {
                 // The label has been through the inline passes already, so it is escaped and
@@ -265,9 +283,10 @@ public enum Markdown {
             } else {
                 out += "<a href=\"\(escape(target))\">\(label)</a>"
             }
-            rest = rest[closeParen.upperBound...]
+            cursor = closeParen.upperBound
+            search = closeParen.upperBound
         }
-        return out + rest
+        return out + text[cursor...]
     }
 
     /// Escaped HTML with its tags taken out, for somewhere only text is allowed.
