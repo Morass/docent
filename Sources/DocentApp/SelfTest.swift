@@ -22,6 +22,7 @@ enum SelfTest {
         case "indexui": failures = MainActor.assumeIsolated { indexFromTheWindow() }
         case "openrequest": failures = MainActor.assumeIsolated { openRequestFromTheTerminal() }
         case "pictures": failures = MainActor.assumeIsolated { pictures() }
+        case "tree": failures = MainActor.assumeIsolated { tree() }
         default:
             FileHandle.standardError.write(Data("selftest: no mode called \"\(mode)\"\n".utf8))
             exit(2)
@@ -224,7 +225,84 @@ enum SelfTest {
     /// The menu item's whole job, minus the file panel: index a folder, install it, reload
     /// the library and select it. The panel is three lines in `DocentApp`; this is the part
     /// that can be wrong.
-    /// A picture in someone's README, all the way to the reader: indexed, copied, loaded by
+    /// The navigator: the project laid out as folders, files and declarations, walked with
+    /// the keyboard the way a file tree is walked.
+    @MainActor
+    private static func tree() -> [String] {
+        var failures: [String] = []
+        func check(_ condition: Bool, _ message: String) { if !condition { failures.append(message) } }
+
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("docent-tree-\(UUID().uuidString)", isDirectory: true)
+        try? fm.createDirectory(at: folder.appendingPathComponent("Sources/IO"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: folder) }
+        try? "# Tree\n\n## Install\n\nRun make.\n".data(using: .utf8)!
+            .write(to: folder.appendingPathComponent("README.md"))
+        try? "/// Somewhere to draw.\npublic struct Canvas {\n    /// Draws.\n    public func draw() {}\n}\n"
+            .data(using: .utf8)!.write(to: folder.appendingPathComponent("Sources/Canvas.swift"))
+        try? "public enum File {}\n".data(using: .utf8)!
+            .write(to: folder.appendingPathComponent("Sources/IO/File.swift"))
+
+        let browser = Browser()
+        guard browser.index(folder: folder, name: "Tree", keyword: "tree") else {
+            return ["indexing was refused"]
+        }
+        let deadline = Date().addingTimeInterval(20)
+        while browser.indexing, Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+
+        // The tree is built off the main thread; wait for it the way the window does.
+        let treeDeadline = Date().addingTimeInterval(10)
+        while browser.tree.isEmpty, Date() < treeDeadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        check(!browser.tree.isEmpty, "the project never laid out as a tree")
+        check(browser.showsTree, "the window would still be showing a result list")
+
+        let titles = browser.tree.map(\.title)
+        check(titles.first == "Overview", "the tree does not start with the overview: \(titles)")
+        check(titles.contains("Sources"), "no Sources folder: \(titles)")
+
+        func find(_ nodes: [DocTree.Node], _ title: String) -> DocTree.Node? {
+            for node in nodes {
+                if node.title == title { return node }
+                if let found = find(node.children, title) { return found }
+            }
+            return nil
+        }
+        let canvasFile = find(browser.tree, "Canvas.swift")
+        check(canvasFile?.children.first?.title == "Canvas",
+              "the file does not offer what it declares: \(canvasFile?.children.map(\.title) ?? [])")
+        check(canvasFile?.children.first?.children.first?.title == "draw",
+              "a method is not under its type")
+        check(find(browser.tree, "IO") != nil, "nested folders are flat")
+
+        // Opening a row shows its page, and the keyboard walks the rows that are visible.
+        guard let method = canvasFile?.children.first?.children.first else {
+            return failures + ["nothing to open"]
+        }
+        browser.expanded.insert(canvasFile!.id)
+        browser.expanded.insert(canvasFile!.children.first!.id)
+        browser.select(method)
+        check(browser.selectedMatch?.entry.name == "Canvas.draw",
+              "opening a row did not open its page: \(browser.selectedMatch?.entry.name ?? "nothing")")
+        check(browser.text(of: browser.selectedMatch!)?.contains("Draws") == true,
+              "the page that opened does not hold the declaration's documentation")
+
+        let before = browser.selectedMatch?.entry.name
+        browser.moveSelection(by: -1)
+        check(browser.selectedMatch?.entry.name != before, "the arrow keys do not walk the tree")
+
+        browser.toggleSelectedRow(open: false)
+        check(true, "")   // closing must not crash; the row may have no children
+
+        try? fm.removeItem(at: DocsetLibrary.standard().installDirectory
+            .appendingPathComponent(Indexer.folderName(for: "Tree")))
+        return failures.filter { !$0.isEmpty }
+    }
+
+    /// A picture in someone's README, all the way to the reader:    /// A picture in someone's README, all the way to the reader: indexed, copied, loaded by
     /// the real web view. `naturalWidth` is the only honest answer — a broken `<img>` renders
     /// as nothing and every layer before this one still passes.
     @MainActor

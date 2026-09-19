@@ -17,7 +17,7 @@ mkdir -p "$WORK/notes"
 printf '# Notes\n\n## Kerning\n\nThe kerning table is fiddly.\n' > "$WORK/notes/notes.md"
 HOME="$WORK" "$ROOT/build/docent" index "$WORK/notes" --name Notes --keyword notes --out "$WORK/Notes.docset" >/dev/null
 
-for mode in browse page network escape theme indexui openrequest pictures; do
+for mode in browse page network escape theme indexui openrequest pictures tree; do
     HOME="$WORK" DOCENT_DOCSETS="$WORK" DOCENT_SELFTEST="$mode" "$APP"
 done
 

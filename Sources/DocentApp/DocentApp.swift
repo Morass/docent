@@ -151,6 +151,18 @@ struct BrowserWindow: View {
                     .focused($searchFocused)
                     .onKeyPress(.upArrow) { browser.moveSelection(by: -1); return .handled }
                     .onKeyPress(.downArrow) { browser.moveSelection(by: 1); return .handled }
+                    // Only while the tree is up and the field is empty: in a search the
+                    // arrows belong to the text.
+                    .onKeyPress(.leftArrow) {
+                        guard browser.showsTree else { return .ignored }
+                        browser.toggleSelectedRow(open: false)
+                        return .handled
+                    }
+                    .onKeyPress(.rightArrow) {
+                        guard browser.showsTree else { return .ignored }
+                        browser.toggleSelectedRow(open: true)
+                        return .handled
+                    }
                 if !browser.query.isEmpty {
                     Button { browser.query = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain)
@@ -159,7 +171,13 @@ struct BrowserWindow: View {
             }
             .padding(8)
             Divider()
-            results
+            // Nothing typed and a docset picked: show the project, not an empty result
+            // list. Typing swaps it for the matches and clearing brings the tree back.
+            if browser.showsTree {
+                tree
+            } else {
+                results
+            }
             // What just happened: indexing progress, the result of it, or why a search found
             // nothing. Without this the menu item looks like it did nothing.
             if !browser.status.isEmpty || browser.indexing {
@@ -181,6 +199,20 @@ struct BrowserWindow: View {
         }
         .background(Color(nsColor: .textBackgroundColor))
         .frame(minWidth: 240, idealWidth: 300, maxWidth: 480)
+    }
+
+    /// The project as a navigator: folders, the files in them, and what each file
+    /// declares. Rows open and close like a file tree, and a row opens its page.
+    private var tree: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(browser.tree) { node in
+                    TreeRow(node: node, depth: 0, browser: browser)
+                }
+            }
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private var results: some View {
@@ -229,6 +261,69 @@ struct BrowserWindow: View {
                     description: Text(browser.docsets.isEmpty ? Browser.emptyLibraryMessage : "Pick a result to read it.")
                 )
                 .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+}
+
+/// One row of the navigator, and its children when it is open.
+private struct TreeRow: View {
+    let node: DocTree.Node
+    let depth: Int
+    @ObservedObject var browser: Browser
+
+    private var isOpen: Bool { browser.expanded.contains(node.id) }
+    private var isSelected: Bool {
+        guard let entry = node.entry, let docset = browser.currentDocset else { return false }
+        return browser.selection == Match(docset: docset, entry: entry, score: 0).id
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                if !node.children.isEmpty {
+                    if isOpen { browser.expanded.remove(node.id) } else { browser.expanded.insert(node.id) }
+                }
+                browser.select(node)
+            } label: {
+                HStack(spacing: 4) {
+                    // The twisty is a hit target of its own, so opening a type does not
+                    // also mean leaving the page you were reading.
+                    Group {
+                        if node.children.isEmpty {
+                            Image(systemName: "circle.fill").font(.system(size: 3))
+                                .foregroundStyle(Color.primary.opacity(0.35))
+                                .frame(width: 12)
+                        } else {
+                            Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Color.primary.opacity(0.7))
+                                .frame(width: 12)
+                        }
+                    }
+                    Text(node.title)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let detail = node.detail {
+                        Text(detail)
+                            .font(.caption2)
+                            .foregroundStyle(Color.primary.opacity(0.6))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 3)
+                .padding(.trailing, 8)
+                .padding(.leading, CGFloat(depth) * 13 + 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(isSelected ? Color.accentColor.opacity(0.25) : Color.clear)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isOpen {
+                ForEach(node.children) { child in
+                    TreeRow(node: child, depth: depth + 1, browser: browser)
+                }
             }
         }
     }

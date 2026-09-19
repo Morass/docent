@@ -10,13 +10,25 @@ final class Browser: ObservableObject {
     @Published private(set) var docsets: [Docset] = []
     @Published private(set) var results: [Match] = []
     @Published var selection: Match.ID? { didSet { pushHistoryIfNeeded() } }
-    @Published var docsetFilter: String? { didSet { search() } }
+    @Published var docsetFilter: String? {
+        didSet {
+            guard docsetFilter != oldValue else { return search() }
+            expanded = []
+            reloadTree()
+            search()
+        }
+    }
     /// Which way pages are painted. Remembered between launches, because it is a reading
     /// preference and not a per-session choice.
     @Published var pageAppearance: PageAppearance = PageAppearance.remembered {
         didSet { pageAppearance.remember() }
     }
     @Published private(set) var status: String = ""
+    /// The selected docset laid out as folders, files and declarations. Empty when nothing
+    /// is selected, or when the docset is too large to draw at once.
+    @Published private(set) var tree: [DocTree.Node] = []
+    /// Which tree rows are open, kept here so it survives a search and coming back.
+    @Published var expanded: Set<String> = []
 
     private let service: SearchService
     private var searchWorkItem: DispatchWorkItem?
@@ -122,6 +134,7 @@ final class Browser: ObservableObject {
 
     func reloadDocsets() {
         docsets = service.docsets()
+        reloadTree()
         status = docsets.isEmpty ? Browser.emptyLibraryMessage : ""
         search()
     }
@@ -179,6 +192,107 @@ final class Browser: ObservableObject {
                 self.completedGeneration = mine
             }
         }
+    }
+
+    /// Rebuilds the tree for whatever docset is selected. Off the main thread: it reads
+    /// every row of the index.
+    private func reloadTree() {
+        let hint = docsetFilter
+        guard let hint else {
+            tree = []
+            return
+        }
+        let pool = docsets.filter { service.matches(docset: $0, hint: hint) }
+        guard let docset = pool.first else {
+            tree = []
+            return
+        }
+        let generation = self.generation
+        queue.async { [weak self] in
+            let entries = (try? SearchIndex(url: docset.indexURL))
+                .flatMap { try? $0.candidates(matching: "", limit: DocTree.maximumEntries + 1) } ?? []
+            let built = DocTree.build(entries, indexPage: docset.indexPage)
+            DispatchQueue.main.async {
+                guard let self, self.docsetFilter == hint, self.generation >= generation else { return }
+                self.tree = built
+                // Folders open, files closed: the shape of the project at a glance, without
+                // a thousand method names in the way.
+                if self.expanded.isEmpty {
+                    // Folders open, files closed: the shape of the project at a glance,
+                    // without a thousand method names in the way.
+                    var open: Set<String> = []
+                    func openFolders(_ nodes: [DocTree.Node]) {
+                        for node in nodes where node.entry == nil {
+                            open.insert(node.id)
+                            openFolders(node.children)
+                        }
+                    }
+                    openFolders(built)
+                    self.expanded = open
+                }
+            }
+        }
+    }
+
+    /// Whether the window is showing the project rather than a list of matches.
+    var showsTree: Bool { query.trimmed.isEmpty && !tree.isEmpty }
+
+    /// The rows a reader can actually see, top to bottom — what the arrow keys move through.
+    var visibleTreeRows: [DocTree.Node] {
+        var rows: [DocTree.Node] = []
+        func walk(_ nodes: [DocTree.Node]) {
+            for node in nodes {
+                rows.append(node)
+                if expanded.contains(node.id) { walk(node.children) }
+            }
+        }
+        walk(tree)
+        return rows
+    }
+
+    /// Open or close the row that is selected, so the keyboard can walk the tree.
+    func toggleSelectedRow(open: Bool) {
+        let rows = visibleTreeRows
+        guard let current = rows.firstIndex(where: { isSelected($0) }) else { return }
+        let node = rows[current]
+        if open {
+            if !node.children.isEmpty { expanded.insert(node.id) }
+        } else if expanded.contains(node.id) {
+            expanded.remove(node.id)
+        } else if let parent = parentOf(node.id) {
+            // Already closed: step out, the way a file tree does.
+            expanded.remove(parent.id)
+            select(parent)
+        }
+    }
+
+    func isSelected(_ node: DocTree.Node) -> Bool {
+        guard let entry = node.entry, let docset = currentDocset else { return false }
+        return selection == Match(docset: docset, entry: entry, score: 0).id
+    }
+
+    private func parentOf(_ id: String) -> DocTree.Node? {
+        func walk(_ nodes: [DocTree.Node], parent: DocTree.Node?) -> DocTree.Node? {
+            for node in nodes {
+                if node.id == id { return parent }
+                if let found = walk(node.children, parent: node) { return found }
+            }
+            return nil
+        }
+        return walk(tree, parent: nil)
+    }
+
+    /// Opens the page a tree row stands for, through the same selection the list uses.
+    func select(_ node: DocTree.Node) {
+        guard let entry = node.entry, let docset = currentDocset else { return }
+        let match = Match(docset: docset, entry: entry, score: 0)
+        if !results.contains(where: { $0.id == match.id }) { results.insert(match, at: 0) }
+        selection = match.id
+    }
+
+    var currentDocset: Docset? {
+        guard let hint = docsetFilter else { return nil }
+        return docsets.first { service.matches(docset: $0, hint: hint) }
     }
 
     /// Everything in the selected docset, in index order.
@@ -254,6 +368,20 @@ final class Browser: ObservableObject {
     // MARK: - Moving through results with the keyboard
 
     func moveSelection(by offset: Int) {
+        // In the tree the arrows walk the rows the reader can see, not the flat result list
+        // behind it: moving from a file to the method below it is the whole point.
+        if showsTree {
+            let rows = visibleTreeRows
+            guard !rows.isEmpty else { return }
+            let current = rows.firstIndex { isSelected($0) } ?? 0
+            var next = min(max(0, current + offset), rows.count - 1)
+            // Folders have no page; keep going the same way until something opens.
+            while rows[next].entry == nil, next > 0, next < rows.count - 1 {
+                next += offset > 0 ? 1 : -1
+            }
+            if rows[next].entry != nil { select(rows[next]) }
+            return
+        }
         guard !results.isEmpty else { return }
         let current = results.firstIndex { $0.id == selection } ?? 0
         let next = min(max(0, current + offset), results.count - 1)

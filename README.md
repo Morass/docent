@@ -173,6 +173,14 @@ The app opens on the search field. Type, move through the results with the arrow
 without leaving the field, and the page appears beside them. The docsets on the left narrow
 the search to one at a time.
 
+Pick a docset and type nothing, and the middle column becomes a **navigator**: the project
+as folders, the files in them, and what each file declares, with a type's methods and
+properties under the type. Click a row to read it, or walk it from the keyboard — ↑ and ↓
+move, → opens a row, ← closes it and steps back out. Start typing and the same column
+becomes your search results; clear the field and the tree comes back where you left it.
+A docset that did not come from `docent index` is grouped by kind instead — classes,
+functions, methods — so anything in your library can be browsed rather than guessed at.
+
 Pages are repainted for reading rather than shown as the docset's own stylesheet left them:
 white with near-black text, or a dark ground with light text, whichever matches the app —
 and **View ▸ Page Appearance** pins it to light or dark if you would rather choose. Code
@@ -184,7 +192,8 @@ exactly as they are.
 | Key | What it does |
 |---|---|
 | ⌘F | back to the search field |
-| ↑ / ↓ | move through the results while you keep typing |
+| ↑ / ↓ | move through the results, or through the navigator |
+| → / ← | open or close a row in the navigator |
 | ⌘[ / ⌘] | back and forward through what you have read |
 | ⇧⌘I | index a folder of documentation |
 | ⌘R | look for docsets again after adding one |
